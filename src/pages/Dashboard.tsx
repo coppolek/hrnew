@@ -1,0 +1,110 @@
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Folder, Plus, Trash2, ArrowRight, Settings, LogOut } from 'lucide-react';
+import { signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { auth } from '../firebase';
+
+const mockProjects = [
+  {
+    id: '1',
+    name: 'scm',
+    description: 'Gestione ore per cantieri e servizi.',
+    siteCount: 8,
+  }
+];
+
+export default function Dashboard() {
+  const navigate = useNavigate();
+  const [user, setUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      // We don't automatically redirect away from dashboard here 
+      // because non-admin users might be logged in via secret code only in a real app,
+      // but for now, admin users get the extra settings buttons.
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      navigate('/login');
+    } catch (error) {
+      console.error("Logout error", error);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-bg-main p-8 font-sans text-text-main md:p-12">
+      <div className="mx-auto max-w-5xl">
+        <header className="mb-12 flex flex-col items-start justify-between gap-4 md:flex-row md:items-center">
+          <div className="flex items-center gap-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-accent-olive text-white">
+              <Folder className="h-6 w-6" />
+            </div>
+            <div>
+              <h1 className="font-serif text-3xl font-bold tracking-tight">GESTIONE ORE</h1>
+              <p className="text-text-muted">Dashboard Progetti</p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-3">
+            {user?.email === 'coppolek@gmail.com' && (
+              <button 
+                onClick={() => navigate('/settings')}
+                className="flex items-center gap-2 rounded-xl bg-sidebar-bg px-4 py-2.5 font-medium text-text-main transition-colors hover:bg-border-soft"
+              >
+                <Settings className="h-5 w-5" />
+                <span className="hidden sm:inline">Impostazioni</span>
+              </button>
+            )}
+            <button className="flex items-center gap-2 rounded-xl bg-accent-olive px-5 py-2.5 font-medium text-white transition-colors hover:bg-accent-olive/90">
+              <Plus className="h-5 w-5" />
+              Nuovo Progetto
+            </button>
+            <button 
+              onClick={handleLogout}
+              className="flex h-11 w-11 items-center justify-center rounded-xl border border-border-soft text-text-muted hover:text-text-main hover:bg-sidebar-bg ml-2"
+              title="Esci"
+            >
+              <LogOut className="h-5 w-5" />
+            </button>
+          </div>
+        </header>
+
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {mockProjects.map((project) => (
+            <div key={project.id} className="flex flex-col rounded-3xl border border-border-soft bg-card-bg p-6 shadow-sm">
+              <div className="mb-4 flex items-center gap-2">
+                <Folder className="h-5 w-5 text-accent-olive" />
+                <h2 className="font-serif text-xl font-bold">{project.name}</h2>
+              </div>
+              
+              <p className="mb-4 text-sm text-text-muted">{project.description}</p>
+              
+              <div className="mb-6">
+                <span className="inline-flex items-center rounded-full bg-sidebar-bg px-3 py-1 text-xs font-medium text-text-muted">
+                  {project.siteCount} Cantieri
+                </span>
+              </div>
+              
+              <div className="mt-auto flex items-center justify-between border-t border-border-soft pt-4">
+                <button 
+                  onClick={() => navigate(`/project/${project.id}`)}
+                  className="flex items-center gap-1 font-medium text-accent-olive hover:underline"
+                >
+                  Apri <ArrowRight className="h-4 w-4" />
+                </button>
+                <button className="text-text-muted hover:text-red-500">
+                  <Trash2 className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
