@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Download, Printer, UserPlus, Trash2, Plus, Building2, Briefcase, X, Pencil, GripVertical } from 'lucide-react';
+import { ArrowLeft, Download, Printer, UserPlus, Trash2, Plus, Building2, Briefcase, X, Pencil, GripVertical, CheckCircle2, Clock } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { OperatorRecord } from '../types';
 import {
@@ -283,14 +283,6 @@ export default function ProjectDetails() {
     return saved ? JSON.parse(saved) : ['extra_ord', 'extra_dir', 'extra_tar', 'extra_val'];
   });
 
-  useEffect(() => {
-    localStorage.setItem(`app_ordCardsOrder_${id || 'default'}`, JSON.stringify(ordCardsOrder));
-  }, [ordCardsOrder, id]);
-
-  useEffect(() => {
-    localStorage.setItem(`app_extCardsOrder_${id || 'default'}`, JSON.stringify(extCardsOrder));
-  }, [extCardsOrder, id]);
-
   // Determine permissions
   const [isReadOnly, setIsReadOnly] = useState(false);
   const [projectName, setProjectName] = useState('SCM');
@@ -384,11 +376,56 @@ export default function ProjectDetails() {
     setProjectData(getStoredDataForMonthYear(id || 'default', activeYear, monthIndex));
   }, [id, activeYear, monthIndex]);
 
-  // Save changes to localStorage whenever projectData changes
+  // Auto-Save System
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  
+  const projectDataRef = useRef(projectData);
+  const ordCardsRef = useRef(ordCardsOrder);
+  const extCardsRef = useRef(extCardsOrder);
+  const [isDirty, setIsDirty] = useState(false);
+
   useEffect(() => {
-    const dataKey = `appData_${id || 'default'}_${activeYear}_${monthIndex}`;
-    localStorage.setItem(dataKey, JSON.stringify(projectData));
-  }, [projectData, id, activeYear, monthIndex]);
+    projectDataRef.current = projectData;
+    ordCardsRef.current = ordCardsOrder;
+    extCardsRef.current = extCardsOrder;
+    setIsDirty(true);
+    setSaveStatus('saving');
+  }, [projectData, ordCardsOrder, extCardsOrder]);
+
+  const saveState = useCallback(() => {
+    if (isDirty) {
+      const dataKey = `appData_${id || 'default'}_${activeYear}_${monthIndex}`;
+      localStorage.setItem(dataKey, JSON.stringify(projectDataRef.current));
+      localStorage.setItem(`app_ordCardsOrder_${id || 'default'}`, JSON.stringify(ordCardsRef.current));
+      localStorage.setItem(`app_extCardsOrder_${id || 'default'}`, JSON.stringify(extCardsRef.current));
+      
+      setLastSaved(new Date());
+      setIsDirty(false);
+      
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2500); // clear saved notification after 2.5s
+    }
+  }, [id, activeYear, monthIndex, isDirty]);
+
+  // Periodic Auto-save every 3 seconds
+  useEffect(() => {
+    const interval = setInterval(saveState, 3000);
+
+    // Save on unmount or tab close
+    const handleBeforeUnload = () => {
+      if (isDirty) {
+        saveState();
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      clearInterval(interval);
+      saveState(); // Flush any unsaved changes completely on unmount
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [saveState, isDirty]);
 
   // Derived state bindings
   const sites = projectData.sites || [];
@@ -686,6 +723,46 @@ export default function ProjectDetails() {
     }
   };
 
+  const handleExportCSV = () => {
+    let csvContent = "Cantiere,Servizio,Operatore,";
+    // Header for days
+    for (let i = 1; i <= daysInMonth; i++) {
+        csvContent += `${i},`;
+    }
+    csvContent += "Totale Ore\n";
+    
+    sites.forEach((site: any) => {
+        services.forEach((service: any) => {
+            const storeKey = `${site.id}_${service.id}`;
+            const ops = operatorStore[storeKey] || [];
+            
+            ops.forEach((op: any) => {
+                let row = `"${site.name}","${service.name}","${op.operatorName}",`;
+                let opTotal = 0;
+                for (let i = 0; i < daysInMonth; i++) {
+                    const hours = op.hours[i] || "";
+                    row += `"${hours}",`;
+                    const parsed = parseFloat((hours as string).replace(',', '.'));
+                    if (!isNaN(parsed)) {
+                        opTotal += parsed;
+                    }
+                }
+                row += `"${formatNumber(opTotal)}"\n`;
+                csvContent += row;
+            });
+        });
+    });
+
+    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' }); // \uFEFF is BOM for Excel UTF-8
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `${projectName.replace(/\s+/g, '_')}_${activeMonth}_${activeYear}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="min-h-screen bg-bg-main font-sans text-text-main">
       {/* Top Navigation Bar */}
@@ -702,6 +779,22 @@ export default function ProjectDetails() {
                   <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-600 border border-blue-100">
                     Sola Lettura
                   </span>
+                )}
+                {!isReadOnly && (
+                  <div className="ml-4 flex items-center gap-1.5 text-xs">
+                    {saveStatus === 'saving' && (
+                      <span className="flex items-center gap-1 text-text-muted">
+                        <Clock className="h-3 w-3 animate-spin duration-2000" />
+                        Salvataggio...
+                      </span>
+                    )}
+                    {saveStatus === 'saved' && (
+                      <span className="flex items-center gap-1 text-accent-olive">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Salvato
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
               <p className="text-xs text-text-muted">Gestione ore per cantieri e servizi.</p>
@@ -835,7 +928,10 @@ export default function ProjectDetails() {
             </div>
             
             <div className="flex gap-3 print:hidden">
-              <button className="flex items-center gap-2 rounded-xl bg-[#E8F1E8] px-4 py-2 font-medium text-[#3E5B3E] hover:bg-[#d5e6d5]">
+              <button 
+                onClick={handleExportCSV}
+                className="flex items-center gap-2 rounded-xl bg-[#E8F1E8] px-4 py-2 font-medium text-[#3E5B3E] hover:bg-[#d5e6d5]"
+              >
                 <Download className="h-4 w-4" /> Excel
               </button>
               <button 
