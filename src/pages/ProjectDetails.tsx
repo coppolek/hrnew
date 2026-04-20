@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Download, Printer, UserPlus, Trash2, Plus, Building2, Briefcase, X, Pencil, GripVertical, CheckCircle2, Clock } from 'lucide-react';
+import { ArrowLeft, Download, Printer, UserPlus, Trash2, Plus, Building2, Briefcase, X, Pencil, GripVertical, CheckCircle2, Clock, Upload, Loader2, Sparkles } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { OperatorRecord } from '../types';
+import { GoogleGenAI, Type } from "@google/genai";
+import * as xlsx from 'xlsx';
 import {
   DndContext,
   closestCenter,
@@ -763,6 +765,159 @@ export default function ProjectDetails() {
     document.body.removeChild(link);
   };
 
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importStatus, setImportStatus] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleAIImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImportLoading(true);
+    setImportStatus('Analisi del file in corso...');
+
+    try {
+      let fileContent = '';
+      let mimeType = 'text/plain';
+
+      if (file.name.endsWith('.csv') || file.name.endsWith('.txt')) {
+        fileContent = await file.text();
+      } else if (file.name.endsWith('.xls') || file.name.endsWith('.xlsx')) {
+        const buffer = await file.arrayBuffer();
+        const workbook = xlsx.read(buffer, { type: 'array' });
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+        fileContent = xlsx.utils.sheet_to_csv(firstSheet);
+      } else if (file.name.endsWith('.pdf')) {
+          setImportStatus('Lettura PDF in corso...');
+          // Reads file to base64
+          const buffer = await file.arrayBuffer();
+          const base64 = btoa(new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), ''));
+          fileContent = base64;
+          mimeType = 'application/pdf';
+      } else {
+        throw new Error("Formato non supportato. Usa CSV, PDF, XLS, o XLSX.");
+      }
+
+      setImportStatus('Elaborazione intelligente AI...');
+      if (!process.env.GEMINI_API_KEY) {
+        throw new Error("API Key Gemini non trovata");
+      }
+      
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      // Build exactly the contents parts based on Mimetype
+      const parts = [];
+      if (mimeType === 'application/pdf') {
+          parts.push({ inlineData: { data: fileContent, mimeType: 'application/pdf' } });
+      } else {
+          parts.push({ text: `Dati raw da file importato:\n\n${fileContent}` });
+      }
+
+      parts.push({
+        text: `Questo è un registro presenze/ore dei lavoratori. 
+Individua i lavoratori, in che cantiere lavorano, per quale servizio (se non specificato mettili nel servizio "PULIZIE ORDINARIE"), e le loro ore giorno per giorno per il mese corrente.
+Ritorna i dati in JSON. Il giorno è un numero da 1 a 31. Le ore sono in formato decimale.
+Attenzione, se ci sono lettere al posto delle ore (come 'm' per malattia o 'f' per ferie, riportali testualmente o ignora se non pertinenti al registro ore).
+
+Esempio di output desiderato:
+{
+  "entries": [
+    { "cantiere": "Alpha Srl", "servizio": "PULIZIE ORDINARIE", "operatore": "Mario Rossi", "giorno": 1, "ore": "4.5" }
+  ]
+}`
+      });
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.1-pro-preview",
+        contents: { parts: parts },
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              entries: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    cantiere: { type: Type.STRING },
+                    servizio: { type: Type.STRING },
+                    operatore: { type: Type.STRING },
+                    giorno: { type: Type.INTEGER },
+                    ore: { type: Type.STRING }
+                  },
+                  required: ["cantiere", "servizio", "operatore", "giorno", "ore"]
+                }
+              }
+            },
+            required: ["entries"]
+          }
+        }
+      });
+
+      const jsonStr = response.text?.trim() || "";
+      const data = JSON.parse(jsonStr);
+      
+      setImportStatus('Sincronizzazione dati in corso...');
+      
+      if (data.entries && Array.isArray(data.entries)) {
+        // Build new state dynamically
+        let currentSites = [...sites];
+        let currentServices = [...services];
+        let currentOperatorStore = { ...operatorStore };
+
+        data.entries.forEach((entry: any) => {
+            // Find or create site
+            let sSite = currentSites.find(s => s.name.toLowerCase() === entry.cantiere.toLowerCase());
+            if (!sSite) {
+                sSite = { id: 'import_' + Date.now() + Math.random(), name: entry.cantiere.toUpperCase() };
+                currentSites.push(sSite);
+            }
+            // Find or create service
+            let sService = currentServices.find(s => s.name.toLowerCase() === entry.servizio.toLowerCase());
+            if (!sService) {
+                sService = { id: 'import_' + Date.now() + Math.random(), name: entry.servizio.toUpperCase() };
+                currentServices.push(sService);
+            }
+
+            const storeKey = `${sSite.id}_${sService.id}`;
+            if (!currentOperatorStore[storeKey]) currentOperatorStore[storeKey] = [];
+            
+            // Find or create operator
+            let ops = currentOperatorStore[storeKey];
+            let sOp = ops.find((o: any) => o.operatorName.toLowerCase() === entry.operatore.toLowerCase());
+            if (!sOp) {
+                sOp = { id: 'import_' + Date.now() + Math.random(), operatorId: 'ai_import', operatorName: entry.operatore.toUpperCase(), hours: {} };
+                ops.push(sOp);
+            }
+
+            if (entry.giorno >= 1 && entry.giorno <= daysInMonth) {
+               sOp.hours[entry.giorno - 1] = entry.ore;
+            }
+        });
+
+        // Trigger updates properly
+        setProjectData(prev => ({
+            ...prev,
+            sites: currentSites,
+            services: currentServices,
+            operatorStore: currentOperatorStore
+        }));
+      }
+
+      setImportStatus('Completato. Rendi il file ora.');
+      setTimeout(() => { setIsImportModalOpen(false); }, 1500);
+
+    } catch (err: any) {
+      console.error(err);
+      alert(`Errore durante l'importazione: ${err.message}`);
+    } finally {
+      setImportLoading(false);
+      setImportStatus('');
+      if (e.target) e.target.value = '';
+    }
+  };
+
   return (
     <div className="min-h-screen bg-bg-main font-sans text-text-main">
       {/* Top Navigation Bar */}
@@ -935,6 +1090,12 @@ export default function ProjectDetails() {
                 <Download className="h-4 w-4" /> Excel
               </button>
               <button 
+                onClick={() => setIsImportModalOpen(true)}
+                className="flex items-center gap-2 rounded-xl bg-purple-50 px-4 py-2 font-medium text-purple-700 hover:bg-purple-100 border border-purple-200"
+              >
+                <Sparkles className="h-4 w-4" /> Importa con AI
+              </button>
+              <button 
                 onClick={() => window.print()}
                 className="flex items-center gap-2 rounded-xl bg-sidebar-bg px-4 py-2 font-medium text-text-main hover:bg-border-soft"
               >
@@ -950,6 +1111,48 @@ export default function ProjectDetails() {
               )}
             </div>
           </div>
+
+          {/* AI Import Modal */}
+          {isImportModalOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+              <div className="w-full max-w-md rounded-3xl bg-white shadow-lg border border-border-soft overflow-hidden">
+                <div className="flex items-center justify-between border-b border-border-soft px-6 py-4 bg-purple-50">
+                  <h3 className="font-serif text-lg font-bold flex items-center gap-2 text-purple-900">
+                    <Sparkles className="h-5 w-5" /> Importazione Intelligente
+                  </h3>
+                  <button onClick={() => !importLoading && setIsImportModalOpen(false)} className="rounded-full p-2 hover:bg-white/50 text-purple-700">
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+                <div className="p-6">
+                  <p className="text-sm text-text-muted mb-6">
+                    Carica un file Excel (.xls, .xlsx), CSV, TXT o un PDF. L'Intelligenza Artificiale estrarrà automaticamente gli operatori, i cantieri, i servizi e le ore lavorate per mese corrente!
+                  </p>
+                  
+                  {!importLoading ? (
+                    <div className="mt-4 border-2 border-dashed border-purple-200 rounded-2xl p-8 text-center hover:bg-purple-50 transition-colors cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+                      <Upload className="h-10 w-10 text-purple-400 mx-auto mb-3" />
+                      <p className="font-medium text-purple-900">Clicca per selezionare un file</p>
+                      <p className="text-xs text-purple-600 mt-1">.csv, .txt, .xls, .xlsx, .pdf</p>
+                      <input 
+                        type="file" 
+                        ref={fileInputRef} 
+                        className="hidden" 
+                        accept=".csv,.txt,.xls,.xlsx,.pdf"
+                        onChange={handleAIImport}
+                      />
+                    </div>
+                  ) : (
+                    <div className="mt-4 py-8 text-center">
+                      <Loader2 className="h-10 w-10 animate-spin text-purple-600 mx-auto mb-4" />
+                      <p className="font-medium text-purple-900">{importStatus}</p>
+                      <p className="text-xs text-purple-600 mt-2">L'operazione potrebbe richiedere alcuni secondi...</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Data Table */}
           <div className="mb-12 overflow-x-auto print:mb-6">
