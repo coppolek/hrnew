@@ -1,8 +1,87 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Download, Printer, UserPlus, Trash2, Plus, Building2, Briefcase, X, Pencil } from 'lucide-react';
+import { ArrowLeft, Download, Printer, UserPlus, Trash2, Plus, Building2, Briefcase, X, Pencil, GripVertical } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { OperatorRecord } from '../types';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  horizontalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
+function SortableNavItem({ id, isActive, isEditing, name, editingName, setEditingName, onSaveEdit, onStartEdit, onDelete, onSelect }: any) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.3 : 1,
+  };
+
+  return (
+    <button
+      ref={setNodeRef}
+      style={style}
+      onClick={() => onSelect(id)}
+      className={cn(
+        "whitespace-nowrap rounded-full border px-4 py-2 text-sm font-medium uppercase transition-colors shrink-0 flex items-center gap-2 relative group touch-none select-none",
+        isActive 
+          ? "border-accent-olive bg-accent-olive text-white" 
+          : "border-border-soft bg-card-bg text-text-muted hover:border-accent-olive/50"
+      )}
+      {...attributes}
+      {...listeners}
+    >
+      {isEditing ? (
+        <input 
+          autoFocus
+          value={editingName} 
+          onChange={e => setEditingName(e.target.value)}
+          onBlur={onSaveEdit}
+          onKeyDown={e => e.key === 'Enter' && onSaveEdit()}
+          onPointerDown={e => e.stopPropagation()}
+          className="bg-transparent outline-none text-white w-full min-w-[120px]"
+        />
+      ) : (
+        <span>{name}</span>
+      )}
+
+      {isActive && !isEditing && (
+        <div className="ml-1 flex items-center gap-1.5 border-l border-white/20 pl-2">
+          <Pencil 
+            className="h-3.5 w-3.5 cursor-pointer hover:text-white/80 transition-colors" 
+            onPointerDown={(e) => { e.stopPropagation(); onStartEdit(); }} 
+            onClick={(e) => { e.stopPropagation(); onStartEdit(); }}
+          />
+          <Trash2 
+            className="h-3.5 w-3.5 cursor-pointer text-red-200 hover:text-red-100 transition-colors" 
+            onPointerDown={(e) => { e.stopPropagation(); onDelete(); }}
+            onClick={(e) => { e.stopPropagation(); onDelete(); }} 
+          />
+        </div>
+      )}
+    </button>
+  );
+}
 
 const months = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 const ItalianDays = ['D', 'L', 'M', 'M', 'G', 'V', 'S'];
@@ -75,7 +154,15 @@ const getStoredDataForMonthYear = (projectId: string, year: number, monthIdx: nu
 export default function ProjectDetails() {
   const navigate = useNavigate();
   const { id } = useParams();
-  
+  const [user, setUser] = useState<{username: string, role: string} | null>(null);
+
+  useEffect(() => {
+    const storedUser = localStorage.getItem('appUser');
+    if (storedUser) {
+      setUser(JSON.parse(storedUser));
+    }
+  }, []);
+
   const currentYear = new Date().getFullYear();
   const currentMonthIdx = new Date().getMonth();
   const currentMonth = months[currentMonthIdx];
@@ -85,6 +172,60 @@ export default function ProjectDetails() {
   const monthIndex = months.indexOf(activeMonth);
 
   const [projectData, setProjectData] = useState(() => getStoredDataForMonthYear(id || 'default', activeYear, monthIndex));
+
+  // Determine permissions
+  const [isReadOnly, setIsReadOnly] = useState(false);
+  const [projectName, setProjectName] = useState('SCM');
+  useEffect(() => {
+    const saved = localStorage.getItem('appProjects');
+    if (saved && user) {
+      const allProjects = JSON.parse(saved);
+      const proj = allProjects.find((p: any) => p.id === id);
+      if (proj) {
+        setProjectName(proj.name.toUpperCase());
+        if (user.role !== 'admin' && proj.permissions && proj.permissions[user.username] === 'read') {
+          setIsReadOnly(true);
+        } else {
+          setIsReadOnly(false);
+        }
+      }
+    }
+  }, [id, user]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 5,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragEndSite = (event: DragEndEvent) => {
+    if (isReadOnly) return;
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setSites((items: any[]) => {
+        const oldIndex = items.findIndex((i) => i.id === active.id);
+        const newIndex = items.findIndex((i) => i.id === over.id);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  };
+
+  const handleDragEndService = (event: DragEndEvent) => {
+    if (isReadOnly) return;
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setServices((items: any[]) => {
+        const oldIndex = items.findIndex((i) => i.id === active.id);
+        const newIndex = items.findIndex((i) => i.id === over.id);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  };
 
   // Reload data when active tracking changes (month or year)
   useEffect(() => {
@@ -177,6 +318,7 @@ export default function ProjectDetails() {
   };
 
   const handleUpdateHours = (operatorId: string, dayIndex: number, value: string) => {
+    if (isReadOnly) return;
     // Allow empty string or valid numbers (including decimals)
     if (value !== '' && !/^\d*\.?\d*$/.test(value)) return;
 
@@ -195,6 +337,7 @@ export default function ProjectDetails() {
   };
 
   const handleAddSite = () => {
+    if (isReadOnly) return;
     const newId = Date.now().toString();
     setSites((prev: any) => [...prev, { id: newId, name: 'NUOVO CANTIERE' }]);
     setActiveSiteId(newId);
@@ -315,7 +458,14 @@ export default function ProjectDetails() {
               <ArrowLeft className="h-5 w-5" />
             </button>
             <div>
-              <h1 className="font-serif text-xl font-bold uppercase">SCM</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="font-serif text-xl font-bold uppercase">{projectName}</h1>
+                {isReadOnly && (
+                  <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-600 border border-blue-100">
+                    Sola Lettura
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-text-muted">Gestione ore per cantieri e servizi.</p>
             </div>
           </div>
@@ -356,99 +506,73 @@ export default function ProjectDetails() {
         </div>
 
         {/* Sites Navigation */}
-        <div className="mb-6 flex items-center gap-2 overflow-x-auto pb-2 print:hidden">
-          {sites.map((site) => (
-            <button
-              key={site.id}
-              onClick={() => setActiveSiteId(site.id)}
-              className={cn(
-                "whitespace-nowrap rounded-full border px-4 py-2 text-sm font-medium uppercase transition-colors shrink-0 flex items-center gap-2",
-                activeSiteId === site.id 
-                  ? "border-accent-olive bg-accent-olive text-white" 
-                  : "border-border-soft bg-card-bg text-text-muted hover:border-accent-olive/50"
-              )}
-            >
-              {editingSiteId === site.id ? (
-                <input 
-                  autoFocus
-                  value={editingSiteName} 
-                  onChange={e => setEditingSiteName(e.target.value)}
-                  onBlur={handleSaveSiteEdit}
-                  onKeyDown={e => e.key === 'Enter' && handleSaveSiteEdit()}
-                  className="bg-transparent outline-none text-white w-full min-w-[120px]"
-                />
-              ) : (
-                <span>{site.name}</span>
-              )}
-
-              {activeSiteId === site.id && editingSiteId !== site.id && (
-                <div className="ml-1 flex items-center gap-1.5 border-l border-white/20 pl-2">
-                  <Pencil 
-                    className="h-3.5 w-3.5 cursor-pointer hover:text-white/80 transition-colors" 
-                    onClick={(e) => { e.stopPropagation(); handleStartEditSite(site); }} 
-                  />
-                  <Trash2 
-                    className="h-3.5 w-3.5 cursor-pointer text-red-200 hover:text-red-100 transition-colors" 
-                    onClick={(e) => { e.stopPropagation(); handleDeleteSite(site.id); }} 
-                  />
-                </div>
-              )}
-            </button>
-          ))}
-          <button 
-            onClick={handleAddSite}
-            className="flex shrink-0 h-9 w-9 items-center justify-center rounded-full border border-border-soft bg-card-bg text-text-muted hover:border-accent-olive/50"
+        <div className="mb-6 flex items-center gap-2 overflow-x-auto pb-2 print:hidden Touch-none-container">
+          <DndContext 
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEndSite}
           >
-            <Plus className="h-4 w-4" />
-          </button>
+            <SortableContext items={sites.map((s: any) => s.id)} strategy={horizontalListSortingStrategy}>
+              {sites.map((site: any) => (
+                <SortableNavItem
+                  key={site.id}
+                  id={site.id}
+                  name={site.name}
+                  isActive={activeSiteId === site.id}
+                  isEditing={!isReadOnly && editingSiteId === site.id}
+                  editingName={editingSiteName}
+                  setEditingName={setEditingSiteName}
+                  onSaveEdit={handleSaveSiteEdit}
+                  onStartEdit={() => !isReadOnly && handleStartEditSite(site)}
+                  onDelete={() => !isReadOnly && handleDeleteSite(site.id)}
+                  onSelect={setActiveSiteId}
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
+          {!isReadOnly && (
+            <button 
+              onClick={handleAddSite}
+              className="flex shrink-0 h-9 w-9 items-center justify-center rounded-full border border-border-soft bg-card-bg text-text-muted hover:border-accent-olive/50"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
         {/* Services Navigation */}
-        <div className="mb-8 flex items-center gap-2 overflow-x-auto pb-2 print:hidden">
-          {services.map((service) => (
-            <button
-              key={service.id}
-              onClick={() => setActiveServiceId(service.id)}
-              className={cn(
-                "whitespace-nowrap rounded-full border px-4 py-2 text-sm font-medium uppercase transition-colors shrink-0 flex items-center gap-2",
-                activeServiceId === service.id 
-                  ? "border-accent-olive bg-accent-olive text-white" 
-                  : "border-border-soft bg-card-bg text-text-muted hover:border-accent-olive/50"
-              )}
-            >
-              {editingServiceId === service.id ? (
-                <input 
-                  autoFocus
-                  value={editingServiceName} 
-                  onChange={e => setEditingServiceName(e.target.value)}
-                  onBlur={handleSaveServiceEdit}
-                  onKeyDown={e => e.key === 'Enter' && handleSaveServiceEdit()}
-                  className="bg-transparent outline-none text-white w-full min-w-[120px]"
-                />
-              ) : (
-                <span>{service.name}</span>
-              )}
-
-              {activeServiceId === service.id && editingServiceId !== service.id && (
-                <div className="ml-1 flex items-center gap-1.5 border-l border-white/20 pl-2">
-                  <Pencil 
-                    className="h-3.5 w-3.5 cursor-pointer hover:text-white/80 transition-colors" 
-                    onClick={(e) => { e.stopPropagation(); handleStartEditService(service); }} 
-                  />
-                  <Trash2 
-                    className="h-3.5 w-3.5 cursor-pointer text-red-200 hover:text-red-100 transition-colors" 
-                    onClick={(e) => { e.stopPropagation(); handleDeleteService(service.id); }} 
-                  />
-                </div>
-              )}
-            </button>
-          ))}
-          <button 
-            onClick={handleAddService}
-            className="flex shrink-0 h-9 w-9 items-center justify-center rounded-full border border-border-soft bg-card-bg text-text-muted hover:border-accent-olive/50"
+        <div className="mb-8 flex items-center gap-2 overflow-x-auto pb-2 print:hidden Touch-none-container">
+          <DndContext 
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEndService}
           >
-            <Plus className="h-4 w-4" />
-          </button>
+            <SortableContext items={services.map((s: any) => s.id)} strategy={horizontalListSortingStrategy}>
+              {services.map((service: any) => (
+                <SortableNavItem
+                  key={service.id}
+                  id={service.id}
+                  name={service.name}
+                  isActive={activeServiceId === service.id}
+                  isEditing={!isReadOnly && editingServiceId === service.id}
+                  editingName={editingServiceName}
+                  setEditingName={setEditingServiceName}
+                  onSaveEdit={handleSaveServiceEdit}
+                  onStartEdit={() => !isReadOnly && handleStartEditService(service)}
+                  onDelete={() => !isReadOnly && handleDeleteService(service.id)}
+                  onSelect={setActiveServiceId}
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
+          {!isReadOnly && (
+            <button 
+              onClick={handleAddService}
+              className="flex shrink-0 h-9 w-9 items-center justify-center rounded-full border border-border-soft bg-card-bg text-text-muted hover:border-accent-olive/50"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
         {/* Main Content Area */}
@@ -482,12 +606,14 @@ export default function ProjectDetails() {
               >
                 <Printer className="h-4 w-4" /> Stampa
               </button>
-              <button 
-                onClick={() => setIsModalOpen(true)}
-                className="flex items-center gap-2 rounded-xl bg-accent-olive px-4 py-2 font-medium text-white hover:bg-accent-olive/90"
-              >
-                <UserPlus className="h-4 w-4" /> Aggiungi Operatore
-              </button>
+              {!isReadOnly && (
+                <button 
+                  onClick={() => setIsModalOpen(true)}
+                  className="flex items-center gap-2 rounded-xl bg-accent-olive px-4 py-2 font-medium text-white hover:bg-accent-olive/90"
+                >
+                  <UserPlus className="h-4 w-4" /> Aggiungi Operatore
+                </button>
+              )}
             </div>
           </div>
 
@@ -512,12 +638,14 @@ export default function ProjectDetails() {
                   <tr key={op.id} className="border-b border-[#F5F5F0] hover:bg-sidebar-bg/30 print:border-black/20">
                     <td className="p-3">
                       <div className="flex items-center gap-3">
-                        <button 
-                          onClick={() => handleDeleteOperator(op.id)}
-                          className="text-text-muted hover:text-red-500 print:hidden"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                        {!isReadOnly && (
+                          <button 
+                            onClick={() => handleDeleteOperator(op.id)}
+                            className="text-text-muted hover:text-red-500 print:hidden"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
                         <span className="font-medium uppercase">{op.operatorName}</span>
                       </div>
                     </td>
@@ -525,11 +653,13 @@ export default function ProjectDetails() {
                       <td key={i} className="p-1 text-center">
                         <input
                           type="text"
+                          readOnly={isReadOnly}
                           className={cn(
                             "w-full min-w-[28px] h-8 text-center rounded outline-none transition-colors",
                             op.hours[i] 
                               ? "font-bold text-text-main bg-sidebar-bg focus:bg-white focus:ring-1 focus:ring-accent-olive print:bg-transparent print:ring-0" 
-                              : "text-text-muted bg-transparent hover:bg-sidebar-bg/50 focus:bg-white focus:ring-1 focus:ring-accent-olive print:hidden"
+                              : "text-text-muted bg-transparent hover:bg-sidebar-bg/50 focus:bg-white focus:ring-1 focus:ring-accent-olive print:hidden",
+                            isReadOnly && "focus:ring-0 focus:bg-transparent cursor-default"
                           )}
                           value={op.hours[i] !== undefined ? op.hours[i] : ''}
                           onChange={(e) => handleUpdateHours(op.id, i, e.target.value)}
@@ -558,8 +688,12 @@ export default function ProjectDetails() {
                   <input
                     type="number"
                     value={currentSettings.canone}
+                    readOnly={isReadOnly}
                     onChange={(e) => updateSettings('canone', e.target.value)}
-                    className="w-full bg-transparent font-serif text-2xl font-bold outline-none"
+                    className={cn(
+                      "w-full bg-transparent font-serif text-2xl font-bold outline-none",
+                      isReadOnly && "cursor-default"
+                    )}
                   />
                 </div>
                 <div className="rounded-2xl bg-sidebar-bg p-4 print:border print:border-black/20">
@@ -571,9 +705,13 @@ export default function ProjectDetails() {
                   <input
                     type="number"
                     step="0.01"
+                    readOnly={isReadOnly}
                     value={currentSettings.ord}
                     onChange={(e) => updateSettings('ord', e.target.value)}
-                    className="w-full bg-transparent font-serif text-2xl font-bold outline-none"
+                    className={cn(
+                      "w-full bg-transparent font-serif text-2xl font-bold outline-none",
+                      isReadOnly && "cursor-default"
+                    )}
                   />
                 </div>
                 <div className="rounded-2xl bg-sidebar-bg p-4 print:border print:border-black/20">
@@ -598,9 +736,13 @@ export default function ProjectDetails() {
                   <input
                     type="number"
                     step="0.01"
+                    readOnly={isReadOnly}
                     value={currentSettings.ext}
                     onChange={(e) => updateSettings('ext', e.target.value)}
-                    className="w-full bg-transparent font-serif text-2xl font-bold outline-none"
+                    className={cn(
+                      "w-full bg-transparent font-serif text-2xl font-bold outline-none",
+                      isReadOnly && "cursor-default"
+                    )}
                   />
                 </div>
                 <div className="rounded-2xl bg-[#FFF4E6] p-4 text-[#A67C52] print:border print:border-black/20 print:text-black">
@@ -619,12 +761,14 @@ export default function ProjectDetails() {
               <div className="rounded-2xl border border-border-soft p-4">
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="font-serif font-bold uppercase">Noleggi</h3>
-                <button 
-                  onClick={() => setModalConfig({isOpen: true, type: 'rental'})}
-                  className="flex h-6 w-6 items-center justify-center rounded-full bg-sidebar-bg text-accent-olive hover:bg-border-soft"
-                >
-                  <Plus className="h-4 w-4" />
-                </button>
+                {!isReadOnly && (
+                  <button 
+                    onClick={() => setModalConfig({isOpen: true, type: 'rental'})}
+                    className="flex h-6 w-6 items-center justify-center rounded-full bg-sidebar-bg text-accent-olive hover:bg-border-soft"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                )}
               </div>
               <div className="flex justify-between border-b border-border-soft pb-2 text-xs font-medium text-text-muted">
                 <span>Descrizione</span>
@@ -632,7 +776,7 @@ export default function ProjectDetails() {
               </div>
               {rentals.length === 0 ? (
                 <div className="py-4 text-center text-sm text-text-muted">
-                  Nessuna voce — clicca + per aggiungere
+                  Nessuna voce {!isReadOnly && "— clicca + per aggiungere"}
                 </div>
               ) : (
                 <>
@@ -640,9 +784,11 @@ export default function ProjectDetails() {
                     {rentals.map(rental => (
                       <div key={rental.id} className="flex justify-between items-center text-sm border-b border-border-soft/50 py-2 last:border-0">
                         <div className="flex items-center gap-2">
-                          <button onClick={() => handleDeleteItem(rental.id, 'rental')} className="text-text-muted hover:text-red-500">
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          {!isReadOnly && (
+                            <button onClick={() => handleDeleteItem(rental.id, 'rental')} className="text-text-muted hover:text-red-500">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                           <span>{rental.description}</span>
                         </div>
                         <span className="font-medium">€ {formatNumber(parseFloat(rental.amount) || 0)}</span>
@@ -660,12 +806,14 @@ export default function ProjectDetails() {
             <div className="rounded-2xl border border-border-soft p-4">
               <div className="mb-4 flex items-center justify-between">
                 <h3 className="font-serif font-bold uppercase">Derattizzazione</h3>
-                <button 
-                  onClick={() => setModalConfig({isOpen: true, type: 'deratization'})}
-                  className="flex h-6 w-6 items-center justify-center rounded-full bg-sidebar-bg text-accent-olive hover:bg-border-soft"
-                >
-                  <Plus className="h-4 w-4" />
-                </button>
+                {!isReadOnly && (
+                  <button 
+                    onClick={() => setModalConfig({isOpen: true, type: 'deratization'})}
+                    className="flex h-6 w-6 items-center justify-center rounded-full bg-sidebar-bg text-accent-olive hover:bg-border-soft"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                )}
               </div>
               <div className="flex justify-between border-b border-border-soft pb-2 text-xs font-medium text-text-muted">
                 <span>Descrizione</span>
@@ -673,7 +821,7 @@ export default function ProjectDetails() {
               </div>
               {deratizations.length === 0 ? (
                 <div className="py-4 text-center text-sm text-text-muted">
-                  Nessuna voce — clicca + per aggiungere
+                  Nessuna voce {!isReadOnly && "— clicca + per aggiungere"}
                 </div>
               ) : (
                 <>
@@ -681,9 +829,11 @@ export default function ProjectDetails() {
                     {deratizations.map(item => (
                       <div key={item.id} className="flex justify-between items-center text-sm border-b border-border-soft/50 py-2 last:border-0">
                         <div className="flex items-center gap-2">
-                          <button onClick={() => handleDeleteItem(item.id, 'deratization')} className="text-text-muted hover:text-red-500">
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          {!isReadOnly && (
+                            <button onClick={() => handleDeleteItem(item.id, 'deratization')} className="text-text-muted hover:text-red-500">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                           <span>{item.description}</span>
                         </div>
                         <span className="font-medium">€ {formatNumber(parseFloat(item.amount) || 0)}</span>
