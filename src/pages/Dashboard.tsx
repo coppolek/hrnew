@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Folder, Plus, Trash2, ArrowRight, Settings, LogOut, Users, Shield, X, Save } from 'lucide-react';
+import { Folder, Plus, Trash2, ArrowRight, Settings, LogOut, Users, Shield, X, Save, Search, Bell } from 'lucide-react';
 
 const defaultProjects = [
   {
@@ -16,6 +16,8 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [user, setUser] = useState<{username: string, role: string} | null>(null);
   const [operators, setOperators] = useState<{id: string, username: string}[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [notifications, setNotifications] = useState<{id: string, message: string}[]>([]);
   
   const [projects, setProjects] = useState(() => {
     const saved = localStorage.getItem('appProjects');
@@ -46,6 +48,43 @@ export default function Dashboard() {
     localStorage.removeItem('appUser');
     navigate('/login');
   };
+
+  const addNotification = useCallback((message: string) => {
+    const id = Date.now().toString() + Math.random().toString();
+    setNotifications(prev => [...prev, { id, message }]);
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    }, 5000);
+  }, []);
+
+  // Ascolto eventi di storage (simula notifiche push cross-tab)
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (!user) return;
+      
+      if (e.key === 'appProjects') {
+        if (e.newValue) {
+          setProjects(JSON.parse(e.newValue));
+          addNotification('I permessi o l\'elenco dei progetti sono stati aggiornati da un altro utente.');
+        }
+      } else if (e.key?.startsWith('appData_')) {
+        const parts = e.key.split('_');
+        if (parts.length >= 2) {
+          const projectId = parts[1];
+          // Find the project locally. Use current state.
+          const proj = projects.find((p: any) => p.id === projectId);
+          
+          // Se il progetto esiste e l'utente ha i permessi (o è admin)
+          if (proj && (user.role === 'admin' || proj.permissions?.[user.username] === 'read' || proj.permissions?.[user.username] === 'write')) {
+            addNotification(`Il progetto "${proj.name}" è stato appena aggiornato tramite sincronizzazione.`);
+          }
+        }
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, [user, projects, addNotification]);
 
   const handleAddProject = () => {
     const newProject = {
@@ -86,15 +125,28 @@ export default function Dashboard() {
     setAccessModalProject(null);
   };
 
-  // Filter projects by user permissions
-  const visibleProjects = user?.role === 'admin' 
+  // Filter projects by user permissions and search query
+  const permittedProjects = user?.role === 'admin' 
     ? projects 
     : projects.filter((p: any) => p.permissions && (p.permissions[user?.username || ''] === 'read' || p.permissions[user?.username || ''] === 'write'));
+
+  const visibleProjects = permittedProjects.filter((p: any) => {
+    if (!searchQuery.trim()) return true;
+    
+    // Split the query into individual words/terms
+    const searchTerms = searchQuery.toLowerCase().trim().split(/\s+/);
+    
+    // Combine name and description into a single searchable string
+    const searchableText = `${p.name || ''} ${p.description || ''}`.toLowerCase();
+    
+    // Check if ALL search terms match somewhere in the project
+    return searchTerms.every(term => searchableText.includes(term));
+  });
 
   return (
     <div className="min-h-screen bg-bg-main p-8 font-sans text-text-main md:p-12">
       <div className="mx-auto max-w-5xl">
-        <header className="mb-12 flex flex-col items-start justify-between gap-4 md:flex-row md:items-center">
+        <header className="mb-8 flex flex-col items-start justify-between gap-4 md:flex-row md:items-center">
           <div className="flex items-center gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-accent-olive text-white">
               <Folder className="h-6 w-6" />
@@ -133,6 +185,19 @@ export default function Dashboard() {
             </button>
           </div>
         </header>
+
+        <div className="mb-8 relative max-w-md">
+          <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+            <Search className="h-5 w-5 text-text-muted" />
+          </div>
+          <input
+            type="text"
+            className="block w-full rounded-xl border border-border-soft bg-card-bg py-2.5 pl-10 pr-4 outline-none focus:border-accent-olive focus:ring-1 focus:ring-accent-olive"
+            placeholder="Cerca progetto..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
 
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
           {visibleProjects.map((project: any) => (
@@ -241,6 +306,24 @@ export default function Dashboard() {
             </div>
           </div>
         )}
+
+        {/* Notifications Portal */}
+        <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+          {notifications.map(n => (
+            <div key={n.id} className="flex animate-in slide-in-from-right-8 duration-300 items-center gap-3 rounded-2xl bg-card-bg border border-border-soft p-4 shadow-xl">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent-olive/10 text-accent-olive">
+                <Bell className="h-5 w-5" />
+              </div>
+              <p className="text-sm font-medium text-text-main pr-2">{n.message}</p>
+              <button 
+                onClick={() => setNotifications(prev => prev.filter(x => x.id !== n.id))}
+                className="ml-auto text-text-muted hover:text-text-main rounded-full p-1 hover:bg-sidebar-bg"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
