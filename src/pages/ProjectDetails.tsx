@@ -17,6 +17,8 @@ import {
   SortableContext,
   sortableKeyboardCoordinates,
   horizontalListSortingStrategy,
+  rectSortingStrategy,
+  verticalListSortingStrategy,
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -80,6 +82,104 @@ function SortableNavItem({ id, isActive, isEditing, name, editingName, setEditin
         </div>
       )}
     </button>
+  );
+}
+
+function SortableSummaryCard({ id, isReadOnly, children, className }: any) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging
+  } = useSortable({ id, disabled: isReadOnly });
+
+  const style = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+    opacity: isDragging ? 0.3 : 1,
+    zIndex: isDragging ? 10 : 1,
+    position: 'relative' as any,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(className, "touch-none select-none relative group")}
+    >
+      {!isReadOnly && (
+        <div 
+          {...attributes} 
+          {...listeners} 
+          className="absolute right-2 top-2 cursor-grab active:cursor-grabbing text-text-muted hover:text-text-main opacity-20 hover:opacity-100 z-10"
+        >
+          <GripVertical className="h-4 w-4" />
+        </div>
+      )}
+      {children}
+    </div>
+  );
+}
+
+function SortableOperatorRow({ op, isReadOnly, daysInMonth, isWeekend, handleDeleteOperator, handleUpdateHours, cn }: any) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging
+  } = useSortable({ id: op.id, disabled: isReadOnly });
+
+  const style = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+    position: 'relative' as any,
+    zIndex: isDragging ? 20 : 1,
+  };
+
+  return (
+    <tr ref={setNodeRef} style={style} className={cn("border-b border-[#F5F5F0] hover:bg-sidebar-bg/30 print:border-black/20 bg-card-bg", isDragging ? "shadow-lg ring-1 ring-accent-olive" : "")}>
+      <td className="p-3 bg-card-bg">
+        <div className="flex items-center gap-3">
+          {!isReadOnly && (
+            <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing text-text-muted hover:text-text-main touch-none">
+              <GripVertical className="h-4 w-4" />
+            </div>
+          )}
+          {!isReadOnly && (
+            <button 
+              onClick={() => handleDeleteOperator(op.id)}
+              className="text-text-muted hover:text-red-500 print:hidden shrink-0"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
+          <span className="font-medium uppercase whitespace-nowrap">{op.operatorName}</span>
+        </div>
+      </td>
+      {Array.from({ length: daysInMonth }).map((_, i) => (
+        <td key={i} className="p-1 text-center bg-card-bg">
+          <input
+            type="text"
+            readOnly={isReadOnly}
+            className={cn(
+              "w-full min-w-[28px] h-8 text-center rounded outline-none transition-colors",
+              op.hours[i] 
+                ? "font-bold text-text-main bg-sidebar-bg focus:bg-white focus:ring-1 focus:ring-accent-olive print:bg-transparent print:ring-0" 
+                : "text-text-muted bg-transparent hover:bg-sidebar-bg/50 focus:bg-white focus:ring-1 focus:ring-accent-olive print:hidden",
+              isReadOnly && "focus:ring-0 focus:bg-transparent cursor-default"
+            )}
+            value={op.hours[i] !== undefined ? op.hours[i] : ''}
+            onChange={(e) => handleUpdateHours(op.id, i, e.target.value)}
+            placeholder="-"
+          />
+        </td>
+      ))}
+    </tr>
   );
 }
 
@@ -173,6 +273,24 @@ export default function ProjectDetails() {
 
   const [projectData, setProjectData] = useState(() => getStoredDataForMonthYear(id || 'default', activeYear, monthIndex));
 
+  const [ordCardsOrder, setOrdCardsOrder] = useState<string[]>(() => {
+    const saved = localStorage.getItem(`app_ordCardsOrder_${id || 'default'}`);
+    return saved ? JSON.parse(saved) : ['ore', 'canone', 'decurtare', 'tariffa', 'valore'];
+  });
+
+  const [extCardsOrder, setExtCardsOrder] = useState<string[]>(() => {
+    const saved = localStorage.getItem(`app_extCardsOrder_${id || 'default'}`);
+    return saved ? JSON.parse(saved) : ['extra_ord', 'extra_dir', 'extra_tar', 'extra_val'];
+  });
+
+  useEffect(() => {
+    localStorage.setItem(`app_ordCardsOrder_${id || 'default'}`, JSON.stringify(ordCardsOrder));
+  }, [ordCardsOrder, id]);
+
+  useEffect(() => {
+    localStorage.setItem(`app_extCardsOrder_${id || 'default'}`, JSON.stringify(extCardsOrder));
+  }, [extCardsOrder, id]);
+
   // Determine permissions
   const [isReadOnly, setIsReadOnly] = useState(false);
   const [projectName, setProjectName] = useState('SCM');
@@ -222,6 +340,40 @@ export default function ProjectDetails() {
       setServices((items: any[]) => {
         const oldIndex = items.findIndex((i) => i.id === active.id);
         const newIndex = items.findIndex((i) => i.id === over.id);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  };
+
+  const handleDragEndOperator = (event: DragEndEvent) => {
+    if (isReadOnly) return;
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      const activeIndex = operators.findIndex(op => op.id === active.id);
+      const overIndex = operators.findIndex(op => op.id === over.id);
+      setOperators(arrayMove(operators, activeIndex, overIndex));
+    }
+  };
+
+  const handleDragEndOrd = (event: DragEndEvent) => {
+    if (isReadOnly) return;
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setOrdCardsOrder((items) => {
+        const oldIndex = items.indexOf(active.id as string);
+        const newIndex = items.indexOf(over.id as string);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  };
+
+  const handleDragEndExt = (event: DragEndEvent) => {
+    if (isReadOnly) return;
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setExtCardsOrder((items) => {
+        const oldIndex = items.indexOf(active.id as string);
+        const newIndex = items.indexOf(over.id as string);
         return arrayMove(items, oldIndex, newIndex);
       });
     }
@@ -448,6 +600,92 @@ export default function ProjectDetails() {
   // Formatting helper
   const formatNumber = (num: number) => num.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+  const renderOrdCard = (cardId: string) => {
+    switch(cardId) {
+      case 'ore': return (
+        <SortableSummaryCard key="ore" id="ore" isReadOnly={isReadOnly} className="rounded-2xl bg-sidebar-bg p-4 print:border print:border-black/20">
+          <div className="mb-1 text-xs font-medium uppercase text-text-muted">Ore Eseguite</div>
+          <div className="font-serif text-2xl font-bold">{formatNumber(totalHours)}</div>
+        </SortableSummaryCard>
+      );
+      case 'canone': return (
+        <SortableSummaryCard key="canone" id="canone" isReadOnly={isReadOnly} className="rounded-2xl bg-sidebar-bg p-4 print:border print:border-black/20">
+          <div className="mb-1 text-xs font-medium uppercase text-text-muted">Canone Ore</div>
+          <input
+            type="number"
+            value={currentSettings.canone}
+            readOnly={isReadOnly}
+            onChange={(e) => updateSettings('canone', e.target.value)}
+            className={cn("w-full bg-transparent font-serif text-2xl font-bold outline-none", isReadOnly && "cursor-default")}
+          />
+        </SortableSummaryCard>
+      );
+      case 'decurtare': return (
+        <SortableSummaryCard key="decurtare" id="decurtare" isReadOnly={isReadOnly} className="rounded-2xl bg-sidebar-bg p-4 print:border print:border-black/20">
+          <div className="mb-1 text-xs font-medium uppercase text-text-muted">Da Decurtare</div>
+          <div className="font-serif text-2xl font-bold">0,00</div>
+        </SortableSummaryCard>
+      );
+      case 'tariffa': return (
+        <SortableSummaryCard key="tariffa" id="tariffa" isReadOnly={isReadOnly} className="rounded-2xl bg-sidebar-bg p-4 print:border print:border-black/20">
+          <div className="mb-1 text-xs font-medium uppercase text-text-muted">Tariffa €/H</div>
+          <input
+            type="number"
+            step="0.01"
+            readOnly={isReadOnly}
+            value={currentSettings.ord}
+            onChange={(e) => updateSettings('ord', e.target.value)}
+            className={cn("w-full bg-transparent font-serif text-2xl font-bold outline-none", isReadOnly && "cursor-default")}
+          />
+        </SortableSummaryCard>
+      );
+      case 'valore': return (
+        <SortableSummaryCard key="valore" id="valore" isReadOnly={isReadOnly} className="rounded-2xl bg-sidebar-bg p-4 print:border print:border-black/20">
+          <div className="mb-1 text-xs font-medium uppercase text-text-muted">Valore Canone</div>
+          <div className="font-serif text-2xl font-bold">{formatNumber((parseFloat(currentSettings.canone) || 0) * (parseFloat(currentSettings.ord) || 0))}</div>
+        </SortableSummaryCard>
+      );
+      default: return null;
+    }
+  };
+
+  const renderExtCard = (cardId: string) => {
+    switch(cardId) {
+      case 'extra_ord': return (
+        <SortableSummaryCard key="extra_ord" id="extra_ord" isReadOnly={isReadOnly} className="rounded-2xl bg-[#FFF4E6] p-4 text-[#A67C52] print:border print:border-black/20 print:text-black">
+          <div className="mb-1 text-xs font-medium uppercase">Extra da Ordinarie</div>
+          <div className="font-serif text-2xl font-bold">{formatNumber(oreExtraDaOrdinarie)}</div>
+        </SortableSummaryCard>
+      );
+      case 'extra_dir': return (
+        <SortableSummaryCard key="extra_dir" id="extra_dir" isReadOnly={isReadOnly} className="rounded-2xl bg-[#FFF4E6] p-4 text-[#A67C52] print:border print:border-black/20 print:text-black">
+          <div className="mb-1 text-xs font-medium uppercase">Ore Extra (Dirette)</div>
+          <div className="font-serif text-2xl font-bold">{formatNumber(totalHours)}</div>
+        </SortableSummaryCard>
+      );
+      case 'extra_tar': return (
+        <SortableSummaryCard key="extra_tar" id="extra_tar" isReadOnly={isReadOnly} className="rounded-2xl bg-[#FFF4E6] p-4 text-[#A67C52] print:border print:border-black/20 print:text-black">
+          <div className="mb-1 text-xs font-medium uppercase">Tariffa Extra €/H</div>
+          <input
+            type="number"
+            step="0.01"
+            readOnly={isReadOnly}
+            value={currentSettings.ext}
+            onChange={(e) => updateSettings('ext', e.target.value)}
+            className={cn("w-full bg-transparent font-serif text-2xl font-bold outline-none", isReadOnly && "cursor-default")}
+          />
+        </SortableSummaryCard>
+      );
+      case 'extra_val': return (
+        <SortableSummaryCard key="extra_val" id="extra_val" isReadOnly={isReadOnly} className="rounded-2xl bg-[#FFF4E6] p-4 text-[#A67C52] print:border print:border-black/20 print:text-black">
+          <div className="mb-1 text-xs font-medium uppercase">Valore Extra</div>
+          <div className="font-serif text-2xl font-bold">{formatNumber((totalHours + oreExtraDaOrdinarie) * (parseFloat(currentSettings.ext) || 0))}</div>
+        </SortableSummaryCard>
+      );
+      default: return null;
+    }
+  };
+
   return (
     <div className="min-h-screen bg-bg-main font-sans text-text-main">
       {/* Top Navigation Bar */}
@@ -619,58 +857,39 @@ export default function ProjectDetails() {
 
           {/* Data Table */}
           <div className="mb-12 overflow-x-auto print:mb-6">
-            <table className="w-full border-collapse text-sm">
-              <thead>
-                <tr>
-                  <th className="border-b border-border-soft p-3 text-left font-medium text-text-muted print:border-black">Operatore</th>
-                  {Array.from({ length: daysInMonth }).map((_, i) => (
-                    <th key={i} className="border-b border-border-soft p-2 text-center print:border-black">
-                      <div className="text-xs font-medium text-text-muted">{daysOfWeek[i]}</div>
-                      <div className={cn("font-bold", isWeekend(i) ? "text-accent-olive print:text-black print:opacity-50" : "")}>
-                        {i + 1}
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {operators.map((op) => (
-                  <tr key={op.id} className="border-b border-[#F5F5F0] hover:bg-sidebar-bg/30 print:border-black/20">
-                    <td className="p-3">
-                      <div className="flex items-center gap-3">
-                        {!isReadOnly && (
-                          <button 
-                            onClick={() => handleDeleteOperator(op.id)}
-                            className="text-text-muted hover:text-red-500 print:hidden"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                        <span className="font-medium uppercase">{op.operatorName}</span>
-                      </div>
-                    </td>
-                    {Array.from({ length: daysInMonth }).map((_, i) => (
-                      <td key={i} className="p-1 text-center">
-                        <input
-                          type="text"
-                          readOnly={isReadOnly}
-                          className={cn(
-                            "w-full min-w-[28px] h-8 text-center rounded outline-none transition-colors",
-                            op.hours[i] 
-                              ? "font-bold text-text-main bg-sidebar-bg focus:bg-white focus:ring-1 focus:ring-accent-olive print:bg-transparent print:ring-0" 
-                              : "text-text-muted bg-transparent hover:bg-sidebar-bg/50 focus:bg-white focus:ring-1 focus:ring-accent-olive print:hidden",
-                            isReadOnly && "focus:ring-0 focus:bg-transparent cursor-default"
-                          )}
-                          value={op.hours[i] !== undefined ? op.hours[i] : ''}
-                          onChange={(e) => handleUpdateHours(op.id, i, e.target.value)}
-                          placeholder="-"
-                        />
-                      </td>
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEndOperator}>
+              <SortableContext items={operators.map(op => op.id)} strategy={verticalListSortingStrategy}>
+                <table className="w-full border-collapse text-sm">
+                  <thead>
+                    <tr>
+                      <th className="border-b border-border-soft p-3 text-left font-medium text-text-muted print:border-black">Operatore</th>
+                      {Array.from({ length: daysInMonth }).map((_, i) => (
+                        <th key={i} className="border-b border-border-soft p-2 text-center print:border-black min-w-[32px]">
+                          <div className="text-xs font-medium text-text-muted">{daysOfWeek[i]}</div>
+                          <div className={cn("font-bold", isWeekend(i) ? "text-accent-olive print:text-black print:opacity-50" : "")}>
+                            {i + 1}
+                          </div>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {operators.map((op) => (
+                      <SortableOperatorRow 
+                        key={op.id}
+                        op={op}
+                        isReadOnly={isReadOnly}
+                        daysInMonth={daysInMonth}
+                        isWeekend={isWeekend}
+                        handleDeleteOperator={handleDeleteOperator}
+                        handleUpdateHours={handleUpdateHours}
+                        cn={cn}
+                      />
                     ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                  </tbody>
+                </table>
+              </SortableContext>
+            </DndContext>
           </div>
 
           {/* Summary Section */}
@@ -678,80 +897,23 @@ export default function ProjectDetails() {
             <h3 className="mb-4 font-serif text-lg font-bold uppercase">Riepilogo Cantiere</h3>
             
             {activeServiceName.toLowerCase() !== 'extra' && (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-5 print:grid-cols-5">
-                <div className="rounded-2xl bg-sidebar-bg p-4 print:border print:border-black/20">
-                  <div className="mb-1 text-xs font-medium uppercase text-text-muted">Ore Eseguite</div>
-                  <div className="font-serif text-2xl font-bold">{formatNumber(totalHours)}</div>
-                </div>
-                <div className="rounded-2xl bg-sidebar-bg p-4 print:border print:border-black/20">
-                  <div className="mb-1 text-xs font-medium uppercase text-text-muted">Canone Ore</div>
-                  <input
-                    type="number"
-                    value={currentSettings.canone}
-                    readOnly={isReadOnly}
-                    onChange={(e) => updateSettings('canone', e.target.value)}
-                    className={cn(
-                      "w-full bg-transparent font-serif text-2xl font-bold outline-none",
-                      isReadOnly && "cursor-default"
-                    )}
-                  />
-                </div>
-                <div className="rounded-2xl bg-sidebar-bg p-4 print:border print:border-black/20">
-                  <div className="mb-1 text-xs font-medium uppercase text-text-muted">Da Decurtare</div>
-                  <div className="font-serif text-2xl font-bold">0,00</div>
-                </div>
-                <div className="rounded-2xl bg-sidebar-bg p-4 print:border print:border-black/20">
-                  <div className="mb-1 text-xs font-medium uppercase text-text-muted">Tariffa €/H</div>
-                  <input
-                    type="number"
-                    step="0.01"
-                    readOnly={isReadOnly}
-                    value={currentSettings.ord}
-                    onChange={(e) => updateSettings('ord', e.target.value)}
-                    className={cn(
-                      "w-full bg-transparent font-serif text-2xl font-bold outline-none",
-                      isReadOnly && "cursor-default"
-                    )}
-                  />
-                </div>
-                <div className="rounded-2xl bg-sidebar-bg p-4 print:border print:border-black/20">
-                  <div className="mb-1 text-xs font-medium uppercase text-text-muted">Valore Canone</div>
-                  <div className="font-serif text-2xl font-bold">{formatNumber((parseFloat(currentSettings.canone) || 0) * (parseFloat(currentSettings.ord) || 0))}</div>
-                </div>
-              </div>
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEndOrd}>
+                <SortableContext items={ordCardsOrder} strategy={rectSortingStrategy}>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-5 print:grid-cols-5">
+                    {ordCardsOrder.map(renderOrdCard)}
+                  </div>
+                </SortableContext>
+              </DndContext>
             )}
             
             {activeServiceName.toLowerCase() === 'extra' && (
-              <div className="grid grid-cols-1 gap-4 print:grid-cols-4 md:grid-cols-4 mt-4">
-                <div className="rounded-2xl bg-[#FFF4E6] p-4 text-[#A67C52] print:border print:border-black/20 print:text-black">
-                  <div className="mb-1 text-xs font-medium uppercase">Extra da Ordinarie</div>
-                  <div className="font-serif text-2xl font-bold">{formatNumber(oreExtraDaOrdinarie)}</div>
-                </div>
-                <div className="rounded-2xl bg-[#FFF4E6] p-4 text-[#A67C52] print:border print:border-black/20 print:text-black">
-                  <div className="mb-1 text-xs font-medium uppercase">Ore Extra (Dirette)</div>
-                  <div className="font-serif text-2xl font-bold">{formatNumber(totalHours)}</div>
-                </div>
-                <div className="rounded-2xl bg-[#FFF4E6] p-4 text-[#A67C52] print:border print:border-black/20 print:text-black">
-                  <div className="mb-1 text-xs font-medium uppercase">Tariffa Extra €/H</div>
-                  <input
-                    type="number"
-                    step="0.01"
-                    readOnly={isReadOnly}
-                    value={currentSettings.ext}
-                    onChange={(e) => updateSettings('ext', e.target.value)}
-                    className={cn(
-                      "w-full bg-transparent font-serif text-2xl font-bold outline-none",
-                      isReadOnly && "cursor-default"
-                    )}
-                  />
-                </div>
-                <div className="rounded-2xl bg-[#FFF4E6] p-4 text-[#A67C52] print:border print:border-black/20 print:text-black">
-                  <div className="mb-1 text-xs font-medium uppercase">Valore Extra</div>
-                  <div className="font-serif text-2xl font-bold">
-                    {formatNumber((totalHours + oreExtraDaOrdinarie) * (parseFloat(currentSettings.ext) || 0))}
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEndExt}>
+                <SortableContext items={extCardsOrder} strategy={rectSortingStrategy}>
+                  <div className="grid grid-cols-1 gap-4 print:grid-cols-4 md:grid-cols-4 mt-4">
+                    {extCardsOrder.map(renderExtCard)}
                   </div>
-                </div>
-              </div>
+                </SortableContext>
+              </DndContext>
             )}
           </div>
 

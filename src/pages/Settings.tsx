@@ -40,19 +40,26 @@ export default function Settings() {
         const tempApp = initializeApp(dbConfig, 'test-connection-app-' + Date.now());
         const tempDb = getFirestore(tempApp, dbConfig.firestoreDatabaseId || undefined);
         
+        // Write, Read and Delete to ensure full connection and permissions
+        const testDocRef = doc(tempDb, 'test', 'connection');
+        
+        const testOperation = async () => {
+          const { setDoc, getDoc, deleteDoc } = await import('firebase/firestore');
+          await setDoc(testDocRef, { timestamp: Date.now(), status: "ok" });
+          const docSnap = await getDoc(testDocRef);
+          if (!docSnap.exists()) throw new Error("Scrittura apparentemente riuscita, ma il documento non risulta.");
+          await deleteDoc(testDocRef);
+        };
+
         await Promise.race([
-          getDocFromServer(doc(tempDb, 'test', 'connection')),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+          testOperation(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout dopo 5 secondi')), 5000))
         ]);
         
-        alert('Connessione a Firebase riuscita!');
+        alert('Connessione a Firebase riuscita, lettura e scrittura completate senza limitazioni!');
         await deleteApp(tempApp);
       } catch (err: any) {
-        if(err.message.includes('offline') || err.message.includes('Missing or insufficient permissions')) {
-           alert('Connessione stabilita con Firebase! (Permessi limitati o offline gestito correttamente, il database però risponde)');
-        } else {
-           alert('Errore di connessione a Firebase: ' + err.message);
-        }
+        alert('Errore di connessione o permessi limitati in Firebase:\\n' + err.message);
       }
     } else {
       try {
@@ -65,7 +72,7 @@ export default function Settings() {
         if (data.success) {
           alert('Connessione a MySQL riuscita!');
         } else {
-          alert('Errore di connessione a MySQL: ' + data.error);
+          alert('Errore di connessione a MySQL:\\n' + data.error);
         }
       } catch (err: any) {
         alert('Errore di rete durante il test MySQL: impossibile contattare il server locale.');
