@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Download, Printer, UserPlus, Trash2, Plus, Building2, Briefcase, X, Pencil } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -7,19 +7,8 @@ import { OperatorRecord } from '../types';
 const months = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 const ItalianDays = ['D', 'L', 'M', 'M', 'G', 'V', 'S'];
 
-export default function ProjectDetails() {
-  const navigate = useNavigate();
-  const { id } = useParams();
-  
-  const currentYear = new Date().getFullYear();
-  const currentMonth = months[new Date().getMonth()];
-  
-  const [activeMonth, setActiveMonth] = useState(currentMonth);
-  const [activeYear, setActiveYear] = useState(currentYear);
-  
-  const [siteSettings, setSiteSettings] = useState<Record<string, { canone: string, ord: string, ext: string }>>({});
-  
-  const [sites, setSites] = useState([
+const defaultProjectData = {
+  sites: [
     { id: '1', name: 'csr' },
     { id: '2', name: 'villa monte 57' },
     { id: '3', name: 'CANTIERE 3' },
@@ -27,23 +16,114 @@ export default function ProjectDetails() {
     { id: '5', name: 'FONDERIA VILLA VERUCCHIO' },
     { id: '6', name: 'EX SERGIANI CERASOLO' },
     { id: '7', name: 'HITECO VILLA VERUCCHIO' }
-  ]);
+  ],
+  services: [
+    { id: '1', name: 'PULIZIE ORDINARIE' },
+    { id: '2', name: 'extra' },
+    { id: '3', name: 'SERVIZIO 3' }
+  ],
+  siteSettings: {} as Record<string, { canone: string, ord: string, ext: string }>,
+  operatorStore: {
+    '1_1': [{ id: '1', operatorName: 'JAOUIA MALIKA', hours: {} }]
+  } as Record<string, OperatorRecord[]>,
+  rentals: [] as {id: string, description: string, amount: string}[],
+  deratizations: [] as {id: string, description: string, amount: string}[]
+};
+
+const getStoredDataForMonthYear = (projectId: string, year: number, monthIdx: number) => {
+  const currentKey = `appData_${projectId}_${year}_${monthIdx}`;
+  const stored = localStorage.getItem(currentKey);
+  
+  if (stored) {
+    return JSON.parse(stored);
+  }
+
+  // Look for previous data starting from last month and going backwards up to 24 months
+  let checkYear = year;
+  let checkMonth = monthIdx - 1;
+  
+  for (let i = 0; i < 24; i++) {
+    if (checkMonth < 0) {
+      checkMonth = 11;
+      checkYear--;
+    }
+    const prevKey = `appData_${projectId}_${checkYear}_${checkMonth}`;
+    const prevStored = localStorage.getItem(prevKey);
+    if (prevStored) {
+      const prevData = JSON.parse(prevStored);
+      // Clone operatorStore and clear hours when inheriting
+      const newOperatorStore = { ...prevData.operatorStore };
+      Object.keys(newOperatorStore).forEach(k => {
+        newOperatorStore[k] = newOperatorStore[k].map((op: any) => ({ ...op, hours: {} }));
+      });
+      return {
+        sites: prevData.sites || defaultProjectData.sites,
+        services: prevData.services || defaultProjectData.services,
+        siteSettings: prevData.siteSettings || {},
+        operatorStore: newOperatorStore,
+        rentals: [], // Usually specific to a month
+        deratizations: [] // Usually specific to a month
+      };
+    }
+    checkMonth--;
+  }
+
+  // If no past data found, return default
+  return defaultProjectData;
+};
+
+export default function ProjectDetails() {
+  const navigate = useNavigate();
+  const { id } = useParams();
+  
+  const currentYear = new Date().getFullYear();
+  const currentMonthIdx = new Date().getMonth();
+  const currentMonth = months[currentMonthIdx];
+  
+  const [activeMonth, setActiveMonth] = useState(currentMonth);
+  const [activeYear, setActiveYear] = useState(currentYear);
+  const monthIndex = months.indexOf(activeMonth);
+
+  const [projectData, setProjectData] = useState(() => getStoredDataForMonthYear(id || 'default', activeYear, monthIndex));
+
+  // Reload data when active tracking changes (month or year)
+  useEffect(() => {
+    setProjectData(getStoredDataForMonthYear(id || 'default', activeYear, monthIndex));
+  }, [id, activeYear, monthIndex]);
+
+  // Save changes to localStorage whenever projectData changes
+  useEffect(() => {
+    const dataKey = `appData_${id || 'default'}_${activeYear}_${monthIndex}`;
+    localStorage.setItem(dataKey, JSON.stringify(projectData));
+  }, [projectData, id, activeYear, monthIndex]);
+
+  // Derived state bindings
+  const sites = projectData.sites || [];
+  const services = projectData.services || [];
+  const siteSettings = projectData.siteSettings || {};
+  const operatorStore = projectData.operatorStore || {};
+  const rentals = projectData.rentals || [];
+  const deratizations = projectData.deratizations || [];
+
+  // Derived setters to hook into existing functions seamlessly
+  const setSites = (val: any) => setProjectData(prev => ({ ...prev, sites: typeof val === 'function' ? val(prev.sites) : val }));
+  const setServices = (val: any) => setProjectData(prev => ({ ...prev, services: typeof val === 'function' ? val(prev.services) : val }));
+  const setSiteSettings = (val: any) => setProjectData(prev => ({ ...prev, siteSettings: typeof val === 'function' ? val(prev.siteSettings) : val }));
+  const setOperatorStore = (val: any) => setProjectData(prev => ({ ...prev, operatorStore: typeof val === 'function' ? val(prev.operatorStore) : val }));
+  const setRentals = (val: any) => setProjectData(prev => ({ ...prev, rentals: typeof val === 'function' ? val(prev.rentals) : val }));
+  const setDeratizations = (val: any) => setProjectData(prev => ({ ...prev, deratizations: typeof val === 'function' ? val(prev.deratizations) : val }));
+
   const [activeSiteId, setActiveSiteId] = useState('1');
   const [editingSiteId, setEditingSiteId] = useState<string | null>(null);
   const [editingSiteName, setEditingSiteName] = useState('');
 
-  const activeSiteName = sites.find(s => s.id === activeSiteId)?.name || '';
+  const activeSiteName = sites.find((s: any) => s.id === activeSiteId)?.name || '';
 
-  const [services, setServices] = useState([
-    { id: '1', name: 'PULIZIE ORDINARIE' },
-    { id: '2', name: 'extra' },
-    { id: '3', name: 'SERVIZIO 3' }
-  ]);
   const [activeServiceId, setActiveServiceId] = useState('1');
   const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
   const [editingServiceName, setEditingServiceName] = useState('');
 
-  const activeServiceName = services.find(s => s.id === activeServiceId)?.name || '';
+  const activeServiceName = services.find((s: any) => s.id === activeServiceId)?.name || '';
 
   const currentSettings = siteSettings[activeSiteId] || { canone: "200", ord: "18.25", ext: "18.25" };
   const updateSettings = (key: 'canone' | 'ord' | 'ext', val: string) => {
@@ -54,7 +134,6 @@ export default function ProjectDetails() {
   };
 
   // Calculate days dynamically based on month and year
-  const monthIndex = months.indexOf(activeMonth);
   // Get number of days in month
   const daysInMonth = new Date(activeYear, monthIndex + 1, 0).getDate();
   
@@ -70,15 +149,11 @@ export default function ProjectDetails() {
     return dayOfWeek === 0 || dayOfWeek === 6; // Sunday or Saturday
   };
 
-  const [operatorStore, setOperatorStore] = useState<Record<string, OperatorRecord[]>>({
-    '1_1': [{ id: '1', operatorName: 'JAOUIA MALIKA', hours: { 1: 300 } }]
-  });
-
   const activeStoreKey = `${activeSiteId}_${activeServiceId}`;
   const operators = operatorStore[activeStoreKey] || [];
 
   const setOperators = (newOps: OperatorRecord[]) => {
-    setOperatorStore(prev => ({ ...prev, [activeStoreKey]: newOps }));
+    setOperatorStore((prev: any) => ({ ...prev, [activeStoreKey]: newOps }));
   };
 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -121,18 +196,20 @@ export default function ProjectDetails() {
 
   const handleAddSite = () => {
     const newId = Date.now().toString();
-    setSites([...sites, { id: newId, name: 'NUOVO CANTIERE' }]);
+    setSites((prev: any) => [...prev, { id: newId, name: 'NUOVO CANTIERE' }]);
     setActiveSiteId(newId);
     setEditingSiteId(newId);
     setEditingSiteName('NUOVO CANTIERE');
   };
 
   const handleDeleteSite = (id: string) => {
-    const newSites = sites.filter(s => s.id !== id);
-    setSites(newSites);
-    if (activeSiteId === id && newSites.length > 0) {
-      setActiveSiteId(newSites[0].id);
-    }
+    setSites((prev: any) => {
+      const newSites = prev.filter((s:any) => s.id !== id);
+      if (activeSiteId === id && newSites.length > 0) {
+        setActiveSiteId(newSites[0].id);
+      }
+      return newSites;
+    });
   };
 
   const handleStartEditSite = (site: { id: string, name: string }) => {
@@ -142,25 +219,27 @@ export default function ProjectDetails() {
 
   const handleSaveSiteEdit = () => {
     if (editingSiteName.trim()) {
-      setSites(sites.map(s => s.id === editingSiteId ? { ...s, name: editingSiteName.trim() } : s));
+      setSites((prev: any) => prev.map((s: any) => s.id === editingSiteId ? { ...s, name: editingSiteName.trim() } : s));
     }
     setEditingSiteId(null);
   };
 
   const handleAddService = () => {
     const newId = Date.now().toString();
-    setServices([...services, { id: newId, name: 'NUOVO SERVIZIO' }]);
+    setServices((prev: any) => [...prev, { id: newId, name: 'NUOVO SERVIZIO' }]);
     setActiveServiceId(newId);
     setEditingServiceId(newId);
     setEditingServiceName('NUOVO SERVIZIO');
   };
 
   const handleDeleteService = (id: string) => {
-    const newServices = services.filter(s => s.id !== id);
-    setServices(newServices);
-    if (activeServiceId === id && newServices.length > 0) {
-      setActiveServiceId(newServices[0].id);
-    }
+    setServices((prev: any) => {
+      const newServices = prev.filter((s:any) => s.id !== id);
+      if (activeServiceId === id && newServices.length > 0) {
+        setActiveServiceId(newServices[0].id);
+      }
+      return newServices;
+    });
   };
 
   const handleStartEditService = (service: { id: string, name: string }) => {
@@ -170,7 +249,7 @@ export default function ProjectDetails() {
 
   const handleSaveServiceEdit = () => {
     if (editingServiceName.trim()) {
-      setServices(services.map(s => s.id === editingServiceId ? { ...s, name: editingServiceName.trim() } : s));
+      setServices((prev: any) => prev.map((s: any) => s.id === editingServiceId ? { ...s, name: editingServiceName.trim() } : s));
     }
     setEditingServiceId(null);
   };
@@ -179,17 +258,14 @@ export default function ProjectDetails() {
   const [newItemDesc, setNewItemDesc] = useState('');
   const [newItemAmount, setNewItemAmount] = useState('');
 
-  const [rentals, setRentals] = useState<{id: string, description: string, amount: string}[]>([]);
-  const [deratizations, setDeratizations] = useState<{id: string, description: string, amount: string}[]>([]);
-
   const handleAddItem = (e: React.FormEvent) => {
     e.preventDefault();
     if (newItemDesc.trim() && newItemAmount.trim() && modalConfig.type) {
       const newItem = { id: Date.now().toString(), description: newItemDesc.trim(), amount: newItemAmount.trim() };
       if (modalConfig.type === 'rental') {
-        setRentals([...rentals, newItem]);
+        setRentals((prev: any) => [...prev, newItem]);
       } else {
-        setDeratizations([...deratizations, newItem]);
+        setDeratizations((prev: any) => [...prev, newItem]);
       }
       setNewItemDesc('');
       setNewItemAmount('');
@@ -199,9 +275,9 @@ export default function ProjectDetails() {
 
   const handleDeleteItem = (id: string, type: 'rental' | 'deratization') => {
     if (type === 'rental') {
-      setRentals(rentals.filter(r => r.id !== id));
+      setRentals((prev: any) => prev.filter((r: any) => r.id !== id));
     } else {
-      setDeratizations(deratizations.filter(d => d.id !== id));
+      setDeratizations((prev: any) => prev.filter((d: any) => d.id !== id));
     }
   };
 
