@@ -23,8 +23,16 @@ export default function Login() {
       localStorage.setItem('appUser', JSON.stringify({ username: 'admin', role: 'admin' }));
       navigate('/dashboard');
     } else if (username.trim() && password.trim()) {
-      localStorage.setItem('appUser', JSON.stringify({ username: username.trim(), role: 'operator' }));
-      navigate('/dashboard');
+      const rawOperators = localStorage.getItem('appOperators');
+      const operators = rawOperators ? JSON.parse(rawOperators) : [];
+      const match = operators.find((op: any) => op.username === username.trim() && op.password === password.trim());
+      
+      if (match) {
+        localStorage.setItem('appUser', JSON.stringify({ username: match.username, role: 'operator' }));
+        navigate('/dashboard');
+      } else {
+        alert('Credenziali non valide o utente non autorizzato.');
+      }
     } else {
       alert('Inserisci le credenziali.');
     }

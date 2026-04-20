@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, ShieldAlert, Users, Database, Play } from 'lucide-react';
+import { ArrowLeft, ShieldAlert, Users, Database, Play, Plus, Trash2 } from 'lucide-react';
 import { activeFirebaseConfig } from '../firebase';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
@@ -11,6 +11,13 @@ export default function Settings() {
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [dbType, setDbType] = useState(() => localStorage.getItem('appDbType') || 'firebase');
+  
+  const [operators, setOperators] = useState<{id: string, username: string, password: string}[]>(() => {
+    const raw = localStorage.getItem('appOperators');
+    return raw ? JSON.parse(raw) : [];
+  });
+  const [newOpUsername, setNewOpUsername] = useState('');
+  const [newOpPassword, setNewOpPassword] = useState('');
   
   const [dbConfig, setDbConfig] = useState(activeFirebaseConfig);
   const [mysqlConfig, setMysqlConfig] = useState(() => {
@@ -67,18 +74,36 @@ export default function Settings() {
     setIsTesting(false);
   };
 
-  const handleSave = () => {
-    setIsSaving(true);
-    // Simulate save processing and persist local storage custom config
+  useEffect(() => {
+    localStorage.setItem('appOperators', JSON.stringify(operators));
+  }, [operators]);
+
+  useEffect(() => {
     localStorage.setItem('appDbType', dbType);
+  }, [dbType]);
+
+  useEffect(() => {
     localStorage.setItem('customFirebaseConfig', JSON.stringify(dbConfig));
+  }, [dbConfig]);
+
+  useEffect(() => {
     localStorage.setItem('customMysqlConfig', JSON.stringify(mysqlConfig));
-    
-    setTimeout(() => {
-      setIsSaving(false);
-      alert('Impostazioni salvate con successo! La pagina verrà aggiornata per applicare il nuovo database.');
-      window.location.reload();
-    }, 800);
+  }, [mysqlConfig]);
+
+  const handleAddOperator = () => {
+    if (newOpUsername.trim() && newOpPassword.trim()) {
+      setOperators(prev => [...prev, {
+        id: Date.now().toString(),
+        username: newOpUsername.trim(),
+        password: newOpPassword.trim()
+      }]);
+      setNewOpUsername('');
+      setNewOpPassword('');
+    }
+  };
+
+  const handleDeleteOperator = (id: string) => {
+    setOperators(prev => prev.filter(op => op.id !== id));
   };
 
   return (
@@ -94,14 +119,6 @@ export default function Settings() {
               <p className="text-text-muted">Gestione account e sicurezza</p>
             </div>
           </div>
-          <button 
-            onClick={handleSave}
-            disabled={isSaving}
-            className="flex items-center gap-2 rounded-xl bg-accent-olive px-5 py-2.5 font-medium text-white transition-colors hover:bg-accent-olive/90 disabled:opacity-50"
-          >
-            <Save className="h-5 w-5" />
-            {isSaving ? 'Salvataggio...' : 'Salva'}
-          </button>
         </header>
 
         <div className="space-y-6">
@@ -128,19 +145,62 @@ export default function Settings() {
           <div className="rounded-3xl border border-border-soft bg-card-bg p-6 md:p-8">
             <div className="mb-6 flex items-center gap-3 border-b border-border-soft pb-4">
               <Users className="h-6 w-6 text-accent-olive" />
-              <h2 className="font-serif text-xl font-bold">Gestione Operatori</h2>
+              <h2 className="font-serif text-xl font-bold">Gestione Utenti (Operatori)</h2>
             </div>
             
-            <div className="flex items-center justify-between p-4 bg-bg-main rounded-2xl border border-border-soft">
-              <div>
-                <h3 className="font-bold">Codice di Accesso Globale</h3>
-                <p className="text-sm text-text-muted">Il codice per far accedere i dipendenti alla dashboard.</p>
+            <div className="flex flex-col gap-4">
+              {operators.length === 0 ? (
+                <p className="text-sm text-text-muted italic">Nessun operatore configurato. Aggiungi il primo operatore qui sotto.</p>
+              ) : (
+                <div className="border border-border-soft rounded-2xl bg-bg-main overflow-hidden">
+                  <table className="w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-border-soft bg-sidebar-bg text-text-muted">
+                        <th className="px-4 py-3 font-medium uppercase text-xs">Nome Utente</th>
+                        <th className="px-4 py-3 font-medium uppercase text-xs">Password</th>
+                        <th className="px-4 py-3 w-16"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border-soft">
+                      {operators.map(op => (
+                        <tr key={op.id}>
+                          <td className="px-4 py-3 font-medium">{op.username}</td>
+                          <td className="px-4 py-3 font-mono text-text-muted">{op.password}</td>
+                          <td className="px-4 py-3 text-right">
+                            <button onClick={() => handleDeleteOperator(op.id)} className="text-red-500 hover:text-red-700">
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 mt-2">
+                <input 
+                  type="text" 
+                  placeholder="Nome utente"
+                  value={newOpUsername}
+                  onChange={(e) => setNewOpUsername(e.target.value)}
+                  className="flex-1 rounded-xl border border-border-soft bg-white px-4 py-2 text-sm outline-none focus:border-accent-olive focus:ring-1 focus:ring-accent-olive"
+                />
+                <input 
+                  type="text" 
+                  placeholder="Password"
+                  value={newOpPassword}
+                  onChange={(e) => setNewOpPassword(e.target.value)}
+                  className="flex-1 rounded-xl border border-border-soft bg-white px-4 py-2 text-sm outline-none focus:border-accent-olive focus:ring-1 focus:ring-accent-olive"
+                />
+                <button 
+                  onClick={handleAddOperator}
+                  disabled={!newOpUsername.trim() || !newOpPassword.trim()}
+                  className="flex items-center gap-1 rounded-xl bg-accent-olive px-4 py-2 font-medium text-white transition-colors hover:bg-accent-olive/90 disabled:opacity-50"
+                >
+                  <Plus className="h-4 w-4" /> Aggiungi
+                </button>
               </div>
-              <input 
-                type="text" 
-                defaultValue="12345"
-                className="w-32 rounded-xl border border-border-soft bg-white px-4 py-2 font-mono font-bold text-center outline-none focus:border-accent-olive focus:ring-1 focus:ring-accent-olive"
-              />
             </div>
           </div>
 

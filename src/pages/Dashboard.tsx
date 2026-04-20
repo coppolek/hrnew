@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Folder, Plus, Trash2, ArrowRight, Settings, LogOut } from 'lucide-react';
 
-const mockProjects = [
+const defaultProjects = [
   {
     id: '1',
     name: 'scm',
@@ -14,6 +14,11 @@ const mockProjects = [
 export default function Dashboard() {
   const navigate = useNavigate();
   const [user, setUser] = useState<{username: string, role: string} | null>(null);
+  
+  const [projects, setProjects] = useState(() => {
+    const saved = localStorage.getItem('appProjects');
+    return saved ? JSON.parse(saved) : defaultProjects;
+  });
 
   useEffect(() => {
     const storedUser = localStorage.getItem('appUser');
@@ -24,9 +29,31 @@ export default function Dashboard() {
     }
   }, [navigate]);
 
+  useEffect(() => {
+    localStorage.setItem('appProjects', JSON.stringify(projects));
+  }, [projects]);
+
   const handleLogout = () => {
     localStorage.removeItem('appUser');
     navigate('/login');
+  };
+
+  const handleAddProject = () => {
+    const newProject = {
+      id: Date.now().toString(),
+      name: 'Nuovo Progetto',
+      description: 'Descrizione del nuovo progetto.',
+      siteCount: 0,
+    };
+    setProjects([...projects, newProject]);
+  };
+
+  const handleDeleteProject = (id: string) => {
+    if(window.confirm('Sei sicuro di voler eliminare questo progetto?')) {
+      setProjects(projects.filter((p: any) => p.id !== id));
+      // Optional: Clean up project data from localStorage too
+      // for let i=0... but probably fine to leave stale data for now to keep it simple
+    }
   };
 
   return (
@@ -53,10 +80,15 @@ export default function Dashboard() {
                 <span className="hidden sm:inline">Impostazioni</span>
               </button>
             )}
-            <button className="flex items-center gap-2 rounded-xl bg-accent-olive px-5 py-2.5 font-medium text-white transition-colors hover:bg-accent-olive/90">
-              <Plus className="h-5 w-5" />
-              Nuovo Progetto
-            </button>
+            {user?.role === 'admin' && (
+              <button 
+                onClick={handleAddProject}
+                className="flex items-center gap-2 rounded-xl bg-accent-olive px-5 py-2.5 font-medium text-white transition-colors hover:bg-accent-olive/90"
+              >
+                <Plus className="h-5 w-5" />
+                Nuovo Progetto
+              </button>
+            )}
             <button 
               onClick={handleLogout}
               className="flex h-11 w-11 items-center justify-center rounded-xl border border-border-soft text-text-muted hover:text-text-main hover:bg-sidebar-bg ml-2"
@@ -68,7 +100,7 @@ export default function Dashboard() {
         </header>
 
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {mockProjects.map((project) => (
+          {projects.map((project: any) => (
             <div key={project.id} className="flex flex-col rounded-3xl border border-border-soft bg-card-bg p-6 shadow-sm">
               <div className="mb-4 flex items-center gap-2">
                 <Folder className="h-5 w-5 text-accent-olive" />
@@ -90,9 +122,14 @@ export default function Dashboard() {
                 >
                   Apri <ArrowRight className="h-4 w-4" />
                 </button>
-                <button className="text-text-muted hover:text-red-500">
-                  <Trash2 className="h-5 w-5" />
-                </button>
+                {user?.role === 'admin' && (
+                  <button 
+                    onClick={() => handleDeleteProject(project.id)}
+                    className="text-text-muted hover:text-red-500"
+                  >
+                    <Trash2 className="h-5 w-5" />
+                  </button>
+                )}
               </div>
             </div>
           ))}
