@@ -60,10 +60,10 @@ export default function Settings() {
                 <div className="w-full rounded-xl border border-border-soft bg-bg-main px-4 py-3 font-medium text-text-main opacity-80">
                   <span className="flex items-center gap-2">
                     <ShieldAlert className="h-4 w-4" />
-                    coppolek@gmail.com
+                    admin / admin
                   </span>
                 </div>
-                <p className="mt-2 text-xs text-text-muted">Per ragioni di sicurezza, questo è l'unico indirizzo email abilitato ad accedere come amministratore all'applicazione. Non può essere modificato.</p>
+                <p className="mt-2 text-xs text-text-muted">Per ragioni di sicurezza, questa è l'unica combinazione di utente e password abilitata ad accedere come amministratore all'applicazione. Non può essere modificata.</p>
               </div>
             </div>
           </div>

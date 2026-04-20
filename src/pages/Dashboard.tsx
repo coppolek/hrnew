@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Folder, Plus, Trash2, ArrowRight, Settings, LogOut } from 'lucide-react';
-import { signOut, onAuthStateChanged, User } from 'firebase/auth';
-import { auth } from '../firebase';
 
 const mockProjects = [
   {
@@ -15,25 +13,20 @@ const mockProjects = [
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<{username: string, role: string} | null>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      // We don't automatically redirect away from dashboard here 
-      // because non-admin users might be logged in via secret code only in a real app,
-      // but for now, admin users get the extra settings buttons.
-    });
-    return () => unsubscribe();
-  }, []);
-
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
+    const storedUser = localStorage.getItem('appUser');
+    if (storedUser) {
+      setUser(JSON.parse(storedUser));
+    } else {
       navigate('/login');
-    } catch (error) {
-      console.error("Logout error", error);
     }
+  }, [navigate]);
+
+  const handleLogout = () => {
+    localStorage.removeItem('appUser');
+    navigate('/login');
   };
 
   return (
@@ -51,7 +44,7 @@ export default function Dashboard() {
           </div>
           
           <div className="flex items-center gap-3">
-            {user?.email === 'coppolek@gmail.com' && (
+            {user?.role === 'admin' && (
               <button 
                 onClick={() => navigate('/settings')}
                 className="flex items-center gap-2 rounded-xl bg-sidebar-bg px-4 py-2.5 font-medium text-text-main transition-colors hover:bg-border-soft"
