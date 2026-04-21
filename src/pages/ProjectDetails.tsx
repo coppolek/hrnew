@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Download, Printer, UserPlus, Trash2, Plus, Building2, Briefcase, X, Pencil, GripVertical, CheckCircle2, Clock, Upload, Loader2, Sparkles } from 'lucide-react';
+import { ArrowLeft, Download, Printer, UserPlus, Trash2, Plus, Building2, Briefcase, X, Pencil, GripVertical, CheckCircle2, Clock, Upload, Loader2, Sparkles, Database, UploadCloud, Copy, ClipboardPaste } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { OperatorRecord } from '../types';
 import { GoogleGenAI, Type } from "@google/genai";
@@ -69,18 +69,22 @@ function SortableNavItem({ id, isActive, isEditing, name, editingName, setEditin
         <span>{name}</span>
       )}
 
-      {isActive && !isEditing && (
+      {isActive && !isEditing && (onStartEdit || onDelete) && (
         <div className="ml-1 flex items-center gap-1.5 border-l border-white/20 pl-2">
-          <Pencil 
-            className="h-3.5 w-3.5 cursor-pointer hover:text-white/80 transition-colors" 
-            onPointerDown={(e) => { e.stopPropagation(); onStartEdit(); }} 
-            onClick={(e) => { e.stopPropagation(); onStartEdit(); }}
-          />
-          <Trash2 
-            className="h-3.5 w-3.5 cursor-pointer text-red-200 hover:text-red-100 transition-colors" 
-            onPointerDown={(e) => { e.stopPropagation(); onDelete(); }}
-            onClick={(e) => { e.stopPropagation(); onDelete(); }} 
-          />
+          {onStartEdit && (
+            <Pencil 
+              className="h-3.5 w-3.5 cursor-pointer hover:text-white/80 transition-colors" 
+              onPointerDown={(e) => { e.stopPropagation(); onStartEdit(); }} 
+              onClick={(e) => { e.stopPropagation(); onStartEdit(); }}
+            />
+          )}
+          {onDelete && (
+            <Trash2 
+              className="h-3.5 w-3.5 cursor-pointer text-red-200 hover:text-red-100 transition-colors" 
+              onPointerDown={(e) => { e.stopPropagation(); onDelete(); }}
+              onClick={(e) => { e.stopPropagation(); onDelete(); }} 
+            />
+          )}
         </div>
       )}
     </button>
@@ -200,15 +204,14 @@ const defaultProjectData = {
   ],
   services: [
     { id: '1', name: 'PULIZIE ORDINARIE' },
-    { id: '2', name: 'extra' },
-    { id: '3', name: 'SERVIZIO 3' }
+    { id: '2', name: 'EXTRA' }
   ],
   siteSettings: {} as Record<string, { canone: string, ord: string, ext: string }>,
   operatorStore: {
     '1_1': [{ id: '1', operatorName: 'JAOUIA MALIKA', hours: {} }]
   } as Record<string, OperatorRecord[]>,
-  rentals: [] as {id: string, description: string, amount: string}[],
-  deratizations: [] as {id: string, description: string, amount: string}[]
+  rentalStore: {} as Record<string, {id: string, description: string, amount: string}[]>,
+  deratStore: {} as Record<string, {id: string, description: string, amount: string}[]>
 };
 
 const getStoredDataForMonthYear = (projectId: string, year: number, monthIdx: number) => {
@@ -216,7 +219,24 @@ const getStoredDataForMonthYear = (projectId: string, year: number, monthIdx: nu
   const stored = localStorage.getItem(currentKey);
   
   if (stored) {
-    return JSON.parse(stored);
+    const d = JSON.parse(stored);
+    
+    // Force constraint: exactly two services
+    d.services = [
+      { id: '1', name: 'PULIZIE ORDINARIE' },
+      { id: '2', name: 'EXTRA' }
+    ];
+
+    // Silent migration for older flat arrays
+    if (d.rentals && !d.rentalStore) {
+        d.rentalStore = {};
+        if (d.sites?.length > 0) d.rentalStore[d.sites[0].id] = d.rentals;
+    }
+    if (d.deratizations && !d.deratStore) {
+        d.deratStore = {};
+        if (d.sites?.length > 0) d.deratStore[d.sites[0].id] = d.deratizations;
+    }
+    return d;
   }
 
   // Look for previous data starting from last month and going backwards up to 24 months
@@ -237,13 +257,27 @@ const getStoredDataForMonthYear = (projectId: string, year: number, monthIdx: nu
       Object.keys(newOperatorStore).forEach(k => {
         newOperatorStore[k] = newOperatorStore[k].map((op: any) => ({ ...op, hours: {} }));
       });
+      
+      const migratedRentalStore = prevData.rentalStore || (prevData.rentals && prevData.sites?.length > 0 ? {[prevData.sites[0].id]: prevData.rentals} : {});
+      const migratedDeratStore = prevData.deratStore || (prevData.deratizations && prevData.sites?.length > 0 ? {[prevData.sites[0].id]: prevData.deratizations} : {});
+
+      const newRentalStore: Record<string, any[]> = {};
+      Object.keys(migratedRentalStore).forEach(siteId => {
+         newRentalStore[siteId] = migratedRentalStore[siteId].map((item: any) => ({ ...item, id: Date.now() + Math.random().toString() }));
+      });
+      
+      const newDeratStore: Record<string, any[]> = {};
+      Object.keys(migratedDeratStore).forEach(siteId => {
+         newDeratStore[siteId] = migratedDeratStore[siteId].map((item: any) => ({ ...item, id: Date.now() + Math.random().toString() }));
+      });
+
       return {
         sites: prevData.sites || defaultProjectData.sites,
         services: prevData.services || defaultProjectData.services,
         siteSettings: prevData.siteSettings || {},
         operatorStore: newOperatorStore,
-        rentals: [], // Usually specific to a month
-        deratizations: [] // Usually specific to a month
+        rentalStore: newRentalStore,
+        deratStore: newDeratStore
       };
     }
     checkMonth--;
@@ -277,7 +311,10 @@ export default function ProjectDetails() {
 
   const [ordCardsOrder, setOrdCardsOrder] = useState<string[]>(() => {
     const saved = localStorage.getItem(`app_ordCardsOrder_${id || 'default'}`);
-    return saved ? JSON.parse(saved) : ['ore', 'canone', 'decurtare', 'tariffa', 'valore'];
+    let prevArray = saved ? JSON.parse(saved) : ['ore', 'canone', 'tariffa', 'valore'];
+    // Migrazione: rimuove 'decurtare' per vecchi salvataggi
+    prevArray = prevArray.filter((x: string) => x !== 'decurtare');
+    return prevArray;
   });
 
   const [extCardsOrder, setExtCardsOrder] = useState<string[]>(() => {
@@ -287,6 +324,8 @@ export default function ProjectDetails() {
 
   // Determine permissions
   const [isReadOnly, setIsReadOnly] = useState(false);
+  const isPastMonth = activeYear < currentYear || (activeYear === currentYear && monthIndex < currentMonthIdx);
+
   const [projectName, setProjectName] = useState('SCM');
   useEffect(() => {
     const saved = localStorage.getItem('appProjects');
@@ -434,26 +473,33 @@ export default function ProjectDetails() {
   const services = projectData.services || [];
   const siteSettings = projectData.siteSettings || {};
   const operatorStore = projectData.operatorStore || {};
-  const rentals = projectData.rentals || [];
-  const deratizations = projectData.deratizations || [];
+  
+  const [activeSiteId, setActiveSiteId] = useState('1');
+  const [editingSiteId, setEditingSiteId] = useState<string | null>(null);
+  const [editingSiteName, setEditingSiteName] = useState('');
+
+  const rentals = projectData.rentalStore?.[activeSiteId] || (projectData.rentals && sites.length > 0 && activeSiteId === sites[0].id ? projectData.rentals : []);
+  const deratizations = projectData.deratStore?.[activeSiteId] || (projectData.deratizations && sites.length > 0 && activeSiteId === sites[0].id ? projectData.deratizations : []);
 
   // Derived setters to hook into existing functions seamlessly
   const setSites = (val: any) => setProjectData(prev => ({ ...prev, sites: typeof val === 'function' ? val(prev.sites) : val }));
   const setServices = (val: any) => setProjectData(prev => ({ ...prev, services: typeof val === 'function' ? val(prev.services) : val }));
   const setSiteSettings = (val: any) => setProjectData(prev => ({ ...prev, siteSettings: typeof val === 'function' ? val(prev.siteSettings) : val }));
   const setOperatorStore = (val: any) => setProjectData(prev => ({ ...prev, operatorStore: typeof val === 'function' ? val(prev.operatorStore) : val }));
-  const setRentals = (val: any) => setProjectData(prev => ({ ...prev, rentals: typeof val === 'function' ? val(prev.rentals) : val }));
-  const setDeratizations = (val: any) => setProjectData(prev => ({ ...prev, deratizations: typeof val === 'function' ? val(prev.deratizations) : val }));
-
-  const [activeSiteId, setActiveSiteId] = useState('1');
-  const [editingSiteId, setEditingSiteId] = useState<string | null>(null);
-  const [editingSiteName, setEditingSiteName] = useState('');
+  
+  const setRentals = (val: any) => setProjectData(prev => {
+     let newArr = typeof val === 'function' ? val(prev.rentalStore?.[activeSiteId] || prev.rentals || []) : val;
+     return { ...prev, rentalStore: { ...prev.rentalStore, [activeSiteId]: newArr } };
+  });
+  
+  const setDeratizations = (val: any) => setProjectData(prev => {
+     let newArr = typeof val === 'function' ? val(prev.deratStore?.[activeSiteId] || prev.deratizations || []) : val;
+     return { ...prev, deratStore: { ...prev.deratStore, [activeSiteId]: newArr } };
+  });
 
   const activeSiteName = sites.find((s: any) => s.id === activeSiteId)?.name || '';
 
   const [activeServiceId, setActiveServiceId] = useState('1');
-  const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
-  const [editingServiceName, setEditingServiceName] = useState('');
 
   const activeServiceName = services.find((s: any) => s.id === activeServiceId)?.name || '';
 
@@ -558,36 +604,6 @@ export default function ProjectDetails() {
     setEditingSiteId(null);
   };
 
-  const handleAddService = () => {
-    const newId = Date.now().toString();
-    setServices((prev: any) => [...prev, { id: newId, name: 'NUOVO SERVIZIO' }]);
-    setActiveServiceId(newId);
-    setEditingServiceId(newId);
-    setEditingServiceName('NUOVO SERVIZIO');
-  };
-
-  const handleDeleteService = (id: string) => {
-    setServices((prev: any) => {
-      const newServices = prev.filter((s:any) => s.id !== id);
-      if (activeServiceId === id && newServices.length > 0) {
-        setActiveServiceId(newServices[0].id);
-      }
-      return newServices;
-    });
-  };
-
-  const handleStartEditService = (service: { id: string, name: string }) => {
-    setEditingServiceId(service.id);
-    setEditingServiceName(service.name);
-  };
-
-  const handleSaveServiceEdit = () => {
-    if (editingServiceName.trim()) {
-      setServices((prev: any) => prev.map((s: any) => s.id === editingServiceId ? { ...s, name: editingServiceName.trim() } : s));
-    }
-    setEditingServiceId(null);
-  };
-
   const [modalConfig, setModalConfig] = useState<{isOpen: boolean, type: 'rental' | 'deratization' | null}>({isOpen: false, type: null});
   const [newItemDesc, setNewItemDesc] = useState('');
   const [newItemAmount, setNewItemAmount] = useState('');
@@ -659,12 +675,6 @@ export default function ProjectDetails() {
           />
         </SortableSummaryCard>
       );
-      case 'decurtare': return (
-        <SortableSummaryCard key="decurtare" id="decurtare" isReadOnly={isReadOnly} className="rounded-2xl bg-sidebar-bg p-4 print:border print:border-black/20">
-          <div className="mb-1 text-xs font-medium uppercase text-text-muted">Da Decurtare</div>
-          <div className="font-serif text-2xl font-bold">0,00</div>
-        </SortableSummaryCard>
-      );
       case 'tariffa': return (
         <SortableSummaryCard key="tariffa" id="tariffa" isReadOnly={isReadOnly} className="rounded-2xl bg-sidebar-bg p-4 print:border print:border-black/20">
           <div className="mb-1 text-xs font-medium uppercase text-text-muted">Tariffa €/H</div>
@@ -681,7 +691,7 @@ export default function ProjectDetails() {
       case 'valore': return (
         <SortableSummaryCard key="valore" id="valore" isReadOnly={isReadOnly} className="rounded-2xl bg-sidebar-bg p-4 print:border print:border-black/20">
           <div className="mb-1 text-xs font-medium uppercase text-text-muted">Valore Canone</div>
-          <div className="font-serif text-2xl font-bold">{formatNumber((parseFloat(currentSettings.canone) || 0) * (parseFloat(currentSettings.ord) || 0))}</div>
+          <div className="font-serif text-2xl font-bold">{formatNumber((Math.min(totalHours, parseFloat(currentSettings.canone) || 0)) * (parseFloat(currentSettings.ord) || 0))}</div>
         </SortableSummaryCard>
       );
       default: return null;
@@ -765,6 +775,78 @@ export default function ProjectDetails() {
     document.body.removeChild(link);
   };
 
+  const jsonImportRef = useRef<HTMLInputElement>(null);
+
+  const handleCopyTable = () => {
+    localStorage.setItem('copiedTableData', JSON.stringify(operators));
+    alert("Dati della tabella attuale copiati negli appunti (compresi i nomi degli operatori e le ore)!");
+  };
+
+  const handlePasteTable = () => {
+    const data = localStorage.getItem('copiedTableData');
+    if (data) {
+        if(window.confirm("Vuoi incollare i dati copiati nella tabella del cantiere corrente? Verranno aggiunti in coda agli operatori attuali.")) {
+           try {
+             const parsed = JSON.parse(data);
+             if (Array.isArray(parsed)) {
+               const newOps = parsed.map((op: any) => ({...op, id: Date.now() + Math.random().toString()}));
+               setProjectData(prev => {
+                  const cp = {...prev};
+                  const storeKey = `${activeSiteId}_${activeServiceId}`;
+                  if (!cp.operatorStore) cp.operatorStore = {};
+                  if (!cp.operatorStore[storeKey]) cp.operatorStore[storeKey] = [];
+                  cp.operatorStore[storeKey] = [...cp.operatorStore[storeKey], ...newOps];
+                  return cp;
+               });
+             }
+           } catch {
+             alert('Errore lettura dati. Gli appunti sono danneggiati.');
+           }
+        }
+    } else {
+        alert("Nessun dato copiato negli appunti.");
+    }
+  };
+
+  const handleExportJSON = () => {
+    const dataStr = JSON.stringify(projectData, null, 2);
+    const blob = new Blob([dataStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `backup_${projectName.replace(/\s+/g, '_')}.json`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleImportJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        try {
+            const raw = event.target?.result;
+            if (typeof raw === 'string') {
+                const parsed = JSON.parse(raw);
+                if (parsed && typeof parsed === 'object' && parsed.sites && parsed.services) {
+                    if (window.confirm("ATTENZIONE: Sei sicuro di voler sovrascrivere tutti i dati di questo progetto con questo backup? L'operazione è irreversibile.")) {
+                        setProjectData(parsed);
+                        alert("Backup dati importato con successo!");
+                    }
+                } else {
+                  throw new Error("Struttura progetto non valida.");
+                }
+            }
+        } catch (err) {
+            alert("Errore: il file selezionato non è un backup JSON valido o è danneggiato.");
+        }
+    };
+    reader.readAsText(file);
+    if (e.target) e.target.value = '';
+  };
+
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
   const [importStatus, setImportStatus] = useState('');
@@ -800,11 +882,15 @@ export default function ProjectDetails() {
       }
 
       setImportStatus('Elaborazione intelligente AI...');
-      if (!process.env.GEMINI_API_KEY) {
-        throw new Error("API Key Gemini non trovata");
+      const fallbackKey = typeof process !== 'undefined' && process.env ? process.env.GEMINI_API_KEY : undefined;
+      const customKey = localStorage.getItem('customGeminiApiKey');
+      const finalApiKey = customKey || fallbackKey;
+      
+      if (!finalApiKey) {
+        throw new Error("API Key Gemini non trovata. Per favore inseriscila nella pagina Impostazioni.");
       }
       
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const ai = new GoogleGenAI({ apiKey: finalApiKey });
       // Build exactly the contents parts based on Mimetype
       const parts = [];
       if (mimeType === 'application/pdf') {
@@ -1040,25 +1126,12 @@ Esempio di output desiderato:
                   id={service.id}
                   name={service.name}
                   isActive={activeServiceId === service.id}
-                  isEditing={!isReadOnly && editingServiceId === service.id}
-                  editingName={editingServiceName}
-                  setEditingName={setEditingServiceName}
-                  onSaveEdit={handleSaveServiceEdit}
-                  onStartEdit={() => !isReadOnly && handleStartEditService(service)}
-                  onDelete={() => !isReadOnly && handleDeleteService(service.id)}
+                  isEditing={false}
                   onSelect={setActiveServiceId}
                 />
               ))}
             </SortableContext>
           </DndContext>
-          {!isReadOnly && (
-            <button 
-              onClick={handleAddService}
-              className="flex shrink-0 h-9 w-9 items-center justify-center rounded-full border border-border-soft bg-card-bg text-text-muted hover:border-accent-olive/50"
-            >
-              <Plus className="h-4 w-4" />
-            </button>
-          )}
         </div>
 
         {/* Main Content Area */}
@@ -1083,6 +1156,45 @@ Esempio di output desiderato:
             </div>
             
             <div className="flex gap-3 print:hidden">
+              <input 
+                type="file" 
+                ref={jsonImportRef} 
+                className="hidden" 
+                accept=".json"
+                onChange={handleImportJSON}
+              />
+              {!isReadOnly && (
+                <>
+                  <button 
+                    onClick={handleCopyTable}
+                    className="flex shrink-0 items-center justify-center h-10 w-10 rounded-xl bg-sidebar-bg text-text-main hover:bg-border-soft"
+                    title="Copia Tabella"
+                  >
+                    <Copy className="h-4 w-4" />
+                  </button>
+                  <button 
+                    onClick={handlePasteTable}
+                    className="flex shrink-0 items-center justify-center h-10 w-10 rounded-xl bg-sidebar-bg text-text-main hover:bg-border-soft"
+                    title="Incolla Tabella"
+                  >
+                    <ClipboardPaste className="h-4 w-4" />
+                  </button>
+                </>
+              )}
+              <button 
+                onClick={() => jsonImportRef.current?.click()}
+                className="flex items-center gap-2 rounded-xl bg-sidebar-bg px-4 py-2 font-medium text-text-main hover:bg-border-soft"
+                title="Importa Backup JSON"
+              >
+                <UploadCloud className="h-4 w-4" /> Importa Dati
+              </button>
+              <button 
+                onClick={handleExportJSON}
+                className="flex items-center gap-2 rounded-xl bg-sidebar-bg px-4 py-2 font-medium text-text-main hover:bg-border-soft"
+                title="Esporta Backup JSON"
+              >
+                <Database className="h-4 w-4" /> Esporta
+              </button>
               <button 
                 onClick={handleExportCSV}
                 className="flex items-center gap-2 rounded-xl bg-[#E8F1E8] px-4 py-2 font-medium text-[#3E5B3E] hover:bg-[#d5e6d5]"
@@ -1222,7 +1334,7 @@ Esempio di output desiderato:
               <div className="rounded-2xl border border-border-soft p-4">
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="font-serif font-bold uppercase">Noleggi</h3>
-                {!isReadOnly && (
+                {!isReadOnly && !isPastMonth && (
                   <button 
                     onClick={() => setModalConfig({isOpen: true, type: 'rental'})}
                     className="flex h-6 w-6 items-center justify-center rounded-full bg-sidebar-bg text-accent-olive hover:bg-border-soft"
@@ -1237,7 +1349,7 @@ Esempio di output desiderato:
               </div>
               {rentals.length === 0 ? (
                 <div className="py-4 text-center text-sm text-text-muted">
-                  Nessuna voce {!isReadOnly && "— clicca + per aggiungere"}
+                  Nessuna voce {(!isReadOnly && !isPastMonth) && "— clicca + per aggiungere"}
                 </div>
               ) : (
                 <>
@@ -1245,7 +1357,7 @@ Esempio di output desiderato:
                     {rentals.map(rental => (
                       <div key={rental.id} className="flex justify-between items-center text-sm border-b border-border-soft/50 py-2 last:border-0">
                         <div className="flex items-center gap-2">
-                          {!isReadOnly && (
+                          {(!isReadOnly && !isPastMonth) && (
                             <button onClick={() => handleDeleteItem(rental.id, 'rental')} className="text-text-muted hover:text-red-500">
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
@@ -1267,7 +1379,7 @@ Esempio di output desiderato:
             <div className="rounded-2xl border border-border-soft p-4">
               <div className="mb-4 flex items-center justify-between">
                 <h3 className="font-serif font-bold uppercase">Derattizzazione</h3>
-                {!isReadOnly && (
+                {!isReadOnly && !isPastMonth && (
                   <button 
                     onClick={() => setModalConfig({isOpen: true, type: 'deratization'})}
                     className="flex h-6 w-6 items-center justify-center rounded-full bg-sidebar-bg text-accent-olive hover:bg-border-soft"
@@ -1282,7 +1394,7 @@ Esempio di output desiderato:
               </div>
               {deratizations.length === 0 ? (
                 <div className="py-4 text-center text-sm text-text-muted">
-                  Nessuna voce {!isReadOnly && "— clicca + per aggiungere"}
+                  Nessuna voce {(!isReadOnly && !isPastMonth) && "— clicca + per aggiungere"}
                 </div>
               ) : (
                 <>
@@ -1290,7 +1402,7 @@ Esempio di output desiderato:
                     {deratizations.map(item => (
                       <div key={item.id} className="flex justify-between items-center text-sm border-b border-border-soft/50 py-2 last:border-0">
                         <div className="flex items-center gap-2">
-                          {!isReadOnly && (
+                          {(!isReadOnly && !isPastMonth) && (
                             <button onClick={() => handleDeleteItem(item.id, 'deratization')} className="text-text-muted hover:text-red-500">
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>

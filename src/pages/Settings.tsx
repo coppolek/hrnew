@@ -19,6 +19,8 @@ export default function Settings() {
   const [newOpUsername, setNewOpUsername] = useState('');
   const [newOpPassword, setNewOpPassword] = useState('');
   
+  const [customGeminiKey, setCustomGeminiKey] = useState(() => localStorage.getItem('customGeminiApiKey') || '');
+
   const [dbConfig, setDbConfig] = useState(activeFirebaseConfig);
   const [mysqlConfig, setMysqlConfig] = useState(() => {
     const raw = localStorage.getItem('customMysqlConfig');
@@ -88,6 +90,10 @@ export default function Settings() {
   useEffect(() => {
     localStorage.setItem('appDbType', dbType);
   }, [dbType]);
+
+  useEffect(() => {
+    localStorage.setItem('customGeminiApiKey', customGeminiKey);
+  }, [customGeminiKey]);
 
   useEffect(() => {
     localStorage.setItem('customFirebaseConfig', JSON.stringify(dbConfig));
@@ -207,6 +213,29 @@ export default function Settings() {
                 >
                   <Plus className="h-4 w-4" /> Aggiungi
                 </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-border-soft bg-card-bg p-6 md:p-8">
+            <div className="mb-6 flex items-center gap-3 border-b border-border-soft pb-4">
+              <ShieldAlert className="h-6 w-6 text-purple-600" />
+              <h2 className="font-serif text-xl font-bold text-purple-900">Intelligenza Artificiale</h2>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="mb-2 block text-sm font-medium uppercase text-text-muted">Chiave API Gemini (Opzionale)</label>
+                <input 
+                  type="password" 
+                  value={customGeminiKey}
+                  placeholder="Inserisci la tua API Key Gemini..."
+                  onChange={(e) => setCustomGeminiKey(e.target.value)}
+                  className="w-full rounded-xl border border-border-soft lg:w-2/3 bg-white px-4 py-3 font-medium text-text-main outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
+                />
+                <p className="mt-2 text-xs text-text-muted">
+                  E' già configurata una API Key di sistema gratuita. Se ricevi errori di "Quota superata" durante le importazioni di file o desideri usare la tua chiave Google Gemini, inseriscila qui.
+                </p>
               </div>
             </div>
           </div>
