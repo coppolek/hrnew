@@ -4,6 +4,7 @@ import { ArrowLeft, ShieldAlert, Users, Database, Play, Plus, Trash2 } from 'luc
 import { activeFirebaseConfig } from '../firebase';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { fetchFromFirestore, syncToFirestore } from '../services/db';
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -12,10 +13,21 @@ export default function Settings() {
   const [isTesting, setIsTesting] = useState(false);
   const [dbType, setDbType] = useState(() => localStorage.getItem('appDbType') || 'firebase');
   
-  const [operators, setOperators] = useState<{id: string, username: string, password: string}[]>(() => {
-    const raw = localStorage.getItem('appOperators');
-    return raw ? JSON.parse(raw) : [];
-  });
+  const [operators, setOperators] = useState<{id: string, username: string, password: string}[]>([]);
+  
+  useEffect(() => {
+    fetchFromFirestore('appOperators').then(dbOps => {
+      if(dbOps) {
+        setOperators(dbOps);
+      }
+    });
+  }, []);
+
+  const saveOperators = (newOps: any) => {
+    setOperators(newOps);
+    syncToFirestore('appOperators', newOps);
+  };
+
   const [newOpUsername, setNewOpUsername] = useState('');
   const [newOpPassword, setNewOpPassword] = useState('');
   
@@ -105,18 +117,20 @@ export default function Settings() {
 
   const handleAddOperator = () => {
     if (newOpUsername.trim() && newOpPassword.trim()) {
-      setOperators(prev => [...prev, {
+      const newOps = [...operators, {
         id: Date.now().toString(),
         username: newOpUsername.trim(),
         password: newOpPassword.trim()
-      }]);
+      }];
+      saveOperators(newOps);
       setNewOpUsername('');
       setNewOpPassword('');
     }
   };
 
   const handleDeleteOperator = (id: string) => {
-    setOperators(prev => prev.filter(op => op.id !== id));
+    const newOps = operators.filter(op => op.id !== id);
+    saveOperators(newOps);
   };
 
   return (

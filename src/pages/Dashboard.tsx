@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Folder, Plus, Trash2, ArrowRight, Settings, LogOut, Users, Shield, X, Save, Search, Bell } from 'lucide-react';
+import { fetchFromFirestore, syncToFirestore } from '../services/db';
 
 const defaultProjects = [
   {
@@ -8,7 +9,7 @@ const defaultProjects = [
     name: 'scm',
     description: 'Gestione ore per cantieri e servizi.',
     siteCount: 8,
-    permissions: {} // Added permissions object: Record<string, "read" | "write"> (username -> role)
+    permissions: {}
   }
 ];
 
@@ -18,13 +19,29 @@ export default function Dashboard() {
   const [operators, setOperators] = useState<{id: string, username: string}[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [notifications, setNotifications] = useState<{id: string, message: string}[]>([]);
+  const [isSyncing, setIsSyncing] = useState(true);
   
-  const [projects, setProjects] = useState(() => {
-    const saved = localStorage.getItem('appProjects');
-    return saved ? JSON.parse(saved) : defaultProjects;
-  });
-
+  const [projects, setProjects] = useState<any[]>([]);
   const [accessModalProject, setAccessModalProject] = useState<any>(null);
+
+  useEffect(() => {
+    const loadFromDb = async () => {
+      setIsSyncing(true);
+      const dbProjects = await fetchFromFirestore('appProjects');
+      if (dbProjects) {
+        setProjects(dbProjects);
+      } else {
+        setProjects(defaultProjects);
+      }
+
+      const dbOps = await fetchFromFirestore('appOperators');
+      if (dbOps) {
+        setOperators(dbOps);
+      }
+      setIsSyncing(false);
+    };
+    loadFromDb();
+  }, []);
 
   useEffect(() => {
     const storedUser = localStorage.getItem('appUser');
@@ -33,16 +50,13 @@ export default function Dashboard() {
     } else {
       navigate('/login');
     }
-    
-    const storedOps = localStorage.getItem('appOperators');
-    if (storedOps) {
-      setOperators(JSON.parse(storedOps));
-    }
   }, [navigate]);
 
   useEffect(() => {
-    localStorage.setItem('appProjects', JSON.stringify(projects));
-  }, [projects]);
+    if (!isSyncing && projects.length > 0) {
+      syncToFirestore('appProjects', projects);
+    }
+  }, [projects, isSyncing]);
 
   const handleLogout = () => {
     localStorage.removeItem('appUser');

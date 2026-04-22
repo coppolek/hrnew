@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock, ShieldCheck } from 'lucide-react';
+import { Lock, ShieldCheck, Loader2 } from 'lucide-react';
+import { fetchFromFirestore } from '../services/db';
 
 export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -17,15 +19,21 @@ export default function Login() {
     }
   }, [navigate]);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (username === 'admin' && password === 'admin') {
       localStorage.setItem('appUser', JSON.stringify({ username: 'admin', role: 'admin' }));
       navigate('/dashboard');
     } else if (username.trim() && password.trim()) {
-      const rawOperators = localStorage.getItem('appOperators');
-      const operators = rawOperators ? JSON.parse(rawOperators) : [];
+      setIsLoading(true);
+      let operators = [];
+      const dbOps = await fetchFromFirestore('appOperators');
+      if (dbOps) {
+         operators = dbOps;
+      }
+      
       const match = operators.find((op: any) => op.username === username.trim() && op.password === password.trim());
+      setIsLoading(false);
       
       if (match) {
         localStorage.setItem('appUser', JSON.stringify({ username: match.username, role: 'operator' }));
@@ -68,9 +76,10 @@ export default function Login() {
           
           <button
             type="submit"
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-accent-olive px-4 py-3 font-medium text-white transition-colors hover:bg-accent-olive/90"
+            disabled={isLoading}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-accent-olive px-4 py-3 font-medium text-white transition-colors hover:bg-accent-olive/90 disabled:bg-accent-olive/50"
           >
-            <ShieldCheck className="h-5 w-5" />
+            {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <ShieldCheck className="h-5 w-5" />}
             Accedi
           </button>
         </form>

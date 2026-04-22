@@ -5,8 +5,10 @@ import { cn } from '../lib/utils';
 import { OperatorRecord } from '../types';
 import { GoogleGenAI, Type } from "@google/genai";
 import * as xlsx from 'xlsx';
+import { fetchFromFirestore, syncToFirestore } from '../services/db';
 import {
   DndContext,
+
   closestCenter,
   KeyboardSensor,
   PointerSensor,
@@ -214,12 +216,12 @@ const defaultProjectData = {
   deratStore: {} as Record<string, {id: string, description: string, amount: string}[]>
 };
 
-const getStoredDataForMonthYear = (projectId: string, year: number, monthIdx: number) => {
+const fetchStoredDataForMonthYear = async (projectId: string, year: number, monthIdx: number) => {
   const currentKey = `appData_${projectId}_${year}_${monthIdx}`;
-  const stored = localStorage.getItem(currentKey);
+  const stored = await fetchFromFirestore(currentKey);
   
   if (stored) {
-    const d = JSON.parse(stored);
+    const d = stored;
     
     // Force constraint: exactly two services
     d.services = [
@@ -249,9 +251,9 @@ const getStoredDataForMonthYear = (projectId: string, year: number, monthIdx: nu
       checkYear--;
     }
     const prevKey = `appData_${projectId}_${checkYear}_${checkMonth}`;
-    const prevStored = localStorage.getItem(prevKey);
+    const prevStored = await fetchFromFirestore(prevKey);
     if (prevStored) {
-      const prevData = JSON.parse(prevStored);
+      const prevData = prevStored;
       // Clone operatorStore and clear hours when inheriting
       const newOperatorStore = { ...prevData.operatorStore };
       Object.keys(newOperatorStore).forEach(k => {
@@ -307,20 +309,11 @@ export default function ProjectDetails() {
   const [activeYear, setActiveYear] = useState(currentYear);
   const monthIndex = months.indexOf(activeMonth);
 
-  const [projectData, setProjectData] = useState(() => getStoredDataForMonthYear(id || 'default', activeYear, monthIndex));
+  const [projectData, setProjectData] = useState(defaultProjectData);
+  const [isLoadingDb, setIsLoadingDb] = useState(true);
 
-  const [ordCardsOrder, setOrdCardsOrder] = useState<string[]>(() => {
-    const saved = localStorage.getItem(`app_ordCardsOrder_${id || 'default'}`);
-    let prevArray = saved ? JSON.parse(saved) : ['ore', 'canone', 'tariffa', 'valore'];
-    // Migrazione: rimuove 'decurtare' per vecchi salvataggi
-    prevArray = prevArray.filter((x: string) => x !== 'decurtare');
-    return prevArray;
-  });
-
-  const [extCardsOrder, setExtCardsOrder] = useState<string[]>(() => {
-    const saved = localStorage.getItem(`app_extCardsOrder_${id || 'default'}`);
-    return saved ? JSON.parse(saved) : ['extra_ord', 'extra_dir', 'extra_tar', 'extra_val'];
-  });
+  const [ordCardsOrder, setOrdCardsOrder] = useState<string[]>(['ore', 'canone', 'tariffa', 'valore']);
+  const [extCardsOrder, setExtCardsOrder] = useState<string[]>(['extra_ord', 'extra_dir', 'extra_tar', 'extra_val']);
 
   // Determine permissions
   const [isReadOnly, setIsReadOnly] = useState(false);
@@ -328,19 +321,20 @@ export default function ProjectDetails() {
 
   const [projectName, setProjectName] = useState('SCM');
   useEffect(() => {
-    const saved = localStorage.getItem('appProjects');
-    if (saved && user) {
-      const allProjects = JSON.parse(saved);
-      const proj = allProjects.find((p: any) => p.id === id);
-      if (proj) {
-        setProjectName(proj.name.toUpperCase());
-        if (user.role !== 'admin' && proj.permissions && proj.permissions[user.username] === 'read') {
-          setIsReadOnly(true);
-        } else {
-          setIsReadOnly(false);
+    fetchFromFirestore('appProjects').then(saved => {
+      if (saved && user) {
+        const allProjects = saved;
+        const proj = allProjects.find((p: any) => p.id === id);
+        if (proj) {
+          setProjectName(proj.name.toUpperCase());
+          if (user.role !== 'admin' && proj.permissions && proj.permissions[user.username] === 'read') {
+            setIsReadOnly(true);
+          } else {
+            setIsReadOnly(false);
+          }
         }
       }
-    }
+    });
   }, [id, user]);
 
   const sensors = useSensors(
@@ -414,7 +408,25 @@ export default function ProjectDetails() {
 
   // Reload data when active tracking changes (month or year)
   useEffect(() => {
-    setProjectData(getStoredDataForMonthYear(id || 'default', activeYear, monthIndex));
+    setIsLoadingDb(true);
+    const loadAppData = async () => {
+      const data = await fetchStoredDataForMonthYear(id || 'default', activeYear, monthIndex);
+      setProjectData(data);
+
+      const dbOrd = await fetchFromFirestore(`app_ordCardsOrder_${id || 'default'}`);
+      if(dbOrd) { 
+        // Migrate legacy array if needed
+        let filteredOrd = dbOrd.filter((x: string) => x !== 'decurtare');
+        setOrdCardsOrder(filteredOrd); 
+      }
+
+      const dbExt = await fetchFromFirestore(`app_extCardsOrder_${id || 'default'}`);
+      if(dbExt) { setExtCardsOrder(dbExt); }
+      
+      setIsLoadingDb(false);
+      setIsDirty(false); // Reset dirty flag after load
+    };
+    loadAppData();
   }, [id, activeYear, monthIndex]);
 
   // Auto-Save System
@@ -427,20 +439,23 @@ export default function ProjectDetails() {
   const [isDirty, setIsDirty] = useState(false);
 
   useEffect(() => {
-    projectDataRef.current = projectData;
-    ordCardsRef.current = ordCardsOrder;
-    extCardsRef.current = extCardsOrder;
-    setIsDirty(true);
-    setSaveStatus('saving');
-  }, [projectData, ordCardsOrder, extCardsOrder]);
+    if (!isLoadingDb) {
+      projectDataRef.current = projectData;
+      ordCardsRef.current = ordCardsOrder;
+      extCardsRef.current = extCardsOrder;
+      setIsDirty(true);
+      setSaveStatus('saving');
+    }
+  }, [projectData, ordCardsOrder, extCardsOrder, isLoadingDb]);
 
   const saveState = useCallback(() => {
     if (isDirty) {
       const dataKey = `appData_${id || 'default'}_${activeYear}_${monthIndex}`;
-      localStorage.setItem(dataKey, JSON.stringify(projectDataRef.current));
-      localStorage.setItem(`app_ordCardsOrder_${id || 'default'}`, JSON.stringify(ordCardsRef.current));
-      localStorage.setItem(`app_extCardsOrder_${id || 'default'}`, JSON.stringify(extCardsRef.current));
       
+      syncToFirestore(dataKey, projectDataRef.current);
+      syncToFirestore(`app_ordCardsOrder_${id || 'default'}`, ordCardsRef.current);
+      syncToFirestore(`app_extCardsOrder_${id || 'default'}`, extCardsRef.current);
+
       setLastSaved(new Date());
       setIsDirty(false);
       
@@ -1135,7 +1150,15 @@ Esempio di output desiderato:
         </div>
 
         {/* Main Content Area */}
-        <div className="rounded-3xl border border-border-soft bg-card-bg p-6 shadow-sm">
+        <div className="rounded-3xl border border-border-soft bg-card-bg p-6 shadow-sm relative">
+          {isLoadingDb && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-card-bg/80 backdrop-blur-sm rounded-3xl">
+              <div className="flex flex-col items-center gap-2">
+                <Loader2 className="h-8 w-8 animate-spin text-accent-olive" />
+                <p className="text-sm font-medium text-text-muted">Sincronizzazione in corso...</p>
+              </div>
+            </div>
+          )}
           {/* Header Info */}
           <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
             <div className="flex gap-12 print:w-full print:justify-between">
