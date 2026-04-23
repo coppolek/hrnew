@@ -23,6 +23,7 @@ export default function Dashboard() {
   
   const [projects, setProjects] = useState<any[]>([]);
   const [accessModalProject, setAccessModalProject] = useState<any>(null);
+  const [deleteModalProject, setDeleteModalProject] = useState<any>(null);
 
   const [dbError, setDbError] = useState<string | null>(null);
 
@@ -130,9 +131,14 @@ export default function Dashboard() {
     setProjects([...projects, newProject]);
   };
 
-  const handleDeleteProject = (id: string) => {
-    if(window.confirm('Sei sicuro di voler eliminare questo progetto?')) {
-      setProjects(projects.filter((p: any) => p.id !== id));
+  const handleDeleteProject = (project: any) => {
+    setDeleteModalProject(project);
+  };
+
+  const confirmDeleteProject = () => {
+    if (deleteModalProject) {
+      setProjects(projects.filter((p: any) => p.id !== deleteModalProject.id));
+      setDeleteModalProject(null);
     }
   };
 
@@ -284,7 +290,7 @@ export default function Dashboard() {
                 </button>
                 {user?.role === 'admin' && (
                   <button 
-                    onClick={() => handleDeleteProject(project.id)}
+                    onClick={() => handleDeleteProject(project)}
                     className="text-text-muted hover:text-red-500"
                   >
                     <Trash2 className="h-5 w-5" />
@@ -344,6 +350,37 @@ export default function Dashboard() {
                   >
                     <Save className="h-4 w-4" />
                     Salva Permessi
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Modal */}
+        {deleteModalProject && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-sm rounded-3xl bg-white shadow-lg border border-border-soft">
+              <div className="p-6">
+                <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-500">
+                  <Trash2 className="h-6 w-6" />
+                </div>
+                <h3 className="text-center font-serif text-xl font-bold mb-2">Elimina Progetto</h3>
+                <p className="text-center text-sm text-text-muted mb-6">
+                  Sei sicuro di voler eliminare il progetto <strong>"{deleteModalProject.name}"</strong>? Questa azione non può essere annullata.
+                </p>
+                <div className="flex items-center gap-3">
+                  <button 
+                    onClick={() => setDeleteModalProject(null)}
+                    className="flex-1 rounded-xl bg-sidebar-bg px-4 py-2.5 font-medium text-text-main transition-colors hover:bg-border-soft"
+                  >
+                    Annulla
+                  </button>
+                  <button 
+                    onClick={confirmDeleteProject}
+                    className="flex-1 rounded-xl bg-red-500 px-4 py-2.5 font-medium text-white transition-colors hover:bg-red-600"
+                  >
+                    Elimina
                   </button>
                 </div>
               </div>
