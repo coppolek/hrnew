@@ -11,7 +11,10 @@ export default function Settings() {
   const [adminEmail, setAdminEmail] = useState('coppolek@gmail.com');
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
-  const [dbType, setDbType] = useState(() => localStorage.getItem('appDbType') || 'firebase');
+  const [dbType, setDbType] = useState(() => {
+    const saved = localStorage.getItem('appDbType');
+    return saved ? saved : 'postgres';
+  });
   
   const [operators, setOperators] = useState<{id: string, username: string, password: string}[]>([]);
   

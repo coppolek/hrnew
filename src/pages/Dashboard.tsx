@@ -24,21 +24,34 @@ export default function Dashboard() {
   const [projects, setProjects] = useState<any[]>([]);
   const [accessModalProject, setAccessModalProject] = useState<any>(null);
 
+  const [dbError, setDbError] = useState<string | null>(null);
+
   useEffect(() => {
     const loadFromDb = async () => {
       setIsSyncing(true);
-      const dbProjects = await fetchFromFirestore('appProjects');
-      if (dbProjects) {
-        setProjects(dbProjects);
-      } else {
-        setProjects(defaultProjects);
-      }
+      setDbError(null);
+      try {
+        const dbProjects = await fetchFromFirestore('appProjects');
+        if (dbProjects) {
+          setProjects(dbProjects);
+        } else {
+          setProjects(defaultProjects);
+        }
 
-      const dbOps = await fetchFromFirestore('appOperators');
-      if (dbOps) {
-        setOperators(dbOps);
+        const dbOps = await fetchFromFirestore('appOperators');
+        if (dbOps) {
+          setOperators(dbOps);
+        }
+      } catch (err: any) {
+        if (err.message.includes('password') || err.message.includes('Nessuna configurazione')) {
+          setDbError('Nessuna password di database presente in Impostazioni. L\'uso dei dati rimarrà locale e simulato fin quando non ne verrà inserita una.');
+        } else {
+          setDbError(err.message);
+        }
+        setProjects(defaultProjects);
+      } finally {
+        setIsSyncing(false);
       }
-      setIsSyncing(false);
     };
     loadFromDb();
   }, []);
@@ -53,10 +66,16 @@ export default function Dashboard() {
   }, [navigate]);
 
   useEffect(() => {
-    if (!isSyncing && projects.length > 0) {
-      syncToFirestore('appProjects', projects);
+    if (!isSyncing && projects.length > 0 && !dbError) {
+      try {
+        syncToFirestore('appProjects', projects).catch(err => {
+          if (err.message.includes('password')) {
+            setDbError('Tentativo di sincronizzazione fallito. Password mancante nel DB.');
+          }
+        });
+      } catch(e) {}
     }
-  }, [projects, isSyncing]);
+  }, [projects, isSyncing, dbError]);
 
   const handleLogout = () => {
     localStorage.removeItem('appUser');
@@ -212,6 +231,17 @@ export default function Dashboard() {
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
+        
+        {dbError && (
+          <div className="mb-8 p-4 rounded-xl bg-orange-50 border border-orange-200 text-orange-800 flex items-start gap-3">
+            <Shield className="h-5 w-5 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-medium text-sm">Avviso Database Supabase</p>
+              <p className="text-xs mt-1 opacity-90">{dbError}</p>
+              <button onClick={() => navigate('/settings')} className="mt-2 text-xs font-semibold underline decoration-orange-300 underline-offset-2">Vai alle Impostazioni →</button>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
           {visibleProjects.map((project: any) => (

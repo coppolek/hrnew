@@ -410,27 +410,33 @@ export default function ProjectDetails() {
   useEffect(() => {
     setIsLoadingDb(true);
     const loadAppData = async () => {
-      const data = await fetchStoredDataForMonthYear(id || 'default', activeYear, monthIndex);
-      setProjectData(data);
+      try {
+        const data = await fetchStoredDataForMonthYear(id || 'default', activeYear, monthIndex);
+        setProjectData(data);
 
-      const dbOrd = await fetchFromFirestore(`app_ordCardsOrder_${id || 'default'}`);
-      if(dbOrd) { 
-        // Migrate legacy array if needed
-        let filteredOrd = dbOrd.filter((x: string) => x !== 'decurtare');
-        setOrdCardsOrder(filteredOrd); 
+        const dbOrd = await fetchFromFirestore(`app_ordCardsOrder_${id || 'default'}`);
+        if(dbOrd) { 
+          // Migrate legacy array if needed
+          let filteredOrd = dbOrd.filter((x: string) => x !== 'decurtare');
+          setOrdCardsOrder(filteredOrd); 
+        }
+
+        const dbExt = await fetchFromFirestore(`app_extCardsOrder_${id || 'default'}`);
+        if(dbExt) { setExtCardsOrder(dbExt); }
+      } catch (err: any) {
+        if (err.message.includes("password")) {
+          alert("ATTENZIONE: Manca la password per Supabase! Inseriscila in Impostazioni per salvare e caricare i dati.");
+        }
+      } finally {
+        setIsLoadingDb(false);
+        setIsDirty(false); // Reset dirty flag after load
       }
-
-      const dbExt = await fetchFromFirestore(`app_extCardsOrder_${id || 'default'}`);
-      if(dbExt) { setExtCardsOrder(dbExt); }
-      
-      setIsLoadingDb(false);
-      setIsDirty(false); // Reset dirty flag after load
     };
     loadAppData();
   }, [id, activeYear, monthIndex]);
 
   // Auto-Save System
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   
   const projectDataRef = useRef(projectData);
@@ -448,19 +454,23 @@ export default function ProjectDetails() {
     }
   }, [projectData, ordCardsOrder, extCardsOrder, isLoadingDb]);
 
-  const saveState = useCallback(() => {
+  const saveState = useCallback(async () => {
     if (isDirty) {
       const dataKey = `appData_${id || 'default'}_${activeYear}_${monthIndex}`;
       
-      syncToFirestore(dataKey, projectDataRef.current);
-      syncToFirestore(`app_ordCardsOrder_${id || 'default'}`, ordCardsRef.current);
-      syncToFirestore(`app_extCardsOrder_${id || 'default'}`, extCardsRef.current);
+      try {
+        await syncToFirestore(dataKey, projectDataRef.current);
+        await syncToFirestore(`app_ordCardsOrder_${id || 'default'}`, ordCardsRef.current);
+        await syncToFirestore(`app_extCardsOrder_${id || 'default'}`, extCardsRef.current);
 
-      setLastSaved(new Date());
-      setIsDirty(false);
-      
-      setSaveStatus('saved');
-      setTimeout(() => setSaveStatus('idle'), 2500); // clear saved notification after 2.5s
+        setLastSaved(new Date());
+        setIsDirty(false);
+        
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('idle'), 2500); // clear saved notification after 2.5s
+      } catch (err: any) {
+        setSaveStatus('error');
+      }
     }
   }, [id, activeYear, monthIndex, isDirty]);
 
@@ -1048,6 +1058,12 @@ Esempio di output desiderato:
                       <span className="flex items-center gap-1 text-accent-olive">
                         <CheckCircle2 className="h-3 w-3" />
                         Salvato
+                      </span>
+                    )}
+                    {saveStatus === 'error' && (
+                      <span className="flex items-center gap-1 text-red-500 font-medium">
+                        <X className="h-3 w-3" />
+                        Errore di salvataggio (DB non configurato)
                       </span>
                     )}
                   </div>
