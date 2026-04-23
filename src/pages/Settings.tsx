@@ -34,16 +34,16 @@ export default function Settings() {
   const [customGeminiKey, setCustomGeminiKey] = useState(() => localStorage.getItem('customGeminiApiKey') || '');
 
   const [dbConfig, setDbConfig] = useState(activeFirebaseConfig);
-  const [mysqlConfig, setMysqlConfig] = useState(() => {
-    const raw = localStorage.getItem('customMysqlConfig');
-    return raw ? JSON.parse(raw) : { host: 'localhost', port: '3306', user: 'root', password: '', database: '' };
+  const [postgresConfig, setPostgresConfig] = useState(() => {
+    const raw = localStorage.getItem('customPostgresConfig');
+    return raw ? JSON.parse(raw) : { host: 'db.felcpheinjucicalwxbv.supabase.co', port: '5432', user: 'postgres', password: '', database: 'postgres' };
   });
   
   const handleConfigChange = (key: string, value: string) => {
     if (dbType === 'firebase') {
       setDbConfig(prev => ({ ...prev, [key]: value }));
     } else {
-      setMysqlConfig((prev: any) => ({ ...prev, [key]: value }));
+      setPostgresConfig((prev: any) => ({ ...prev, [key]: value }));
     }
   };
 
@@ -77,19 +77,19 @@ export default function Settings() {
       }
     } else {
       try {
-        const res = await fetch('/api/test-mysql', {
+        const res = await fetch('/api/test-db', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(mysqlConfig)
+          body: JSON.stringify(postgresConfig)
         });
         const data = await res.json();
         if (data.success) {
-          alert('Connessione a MySQL riuscita!');
+          alert('Connessione a Postgres (Supabase) riuscita!');
         } else {
-          alert('Errore di connessione a MySQL:\\n' + data.error);
+          alert('Errore di connessione a Postgres:\\n' + data.error);
         }
       } catch (err: any) {
-        alert('Errore di rete durante il test MySQL: impossibile contattare il server locale.');
+        alert('Errore di rete durante il test Postgres: impossibile contattare il server locale.');
       }
     }
     setIsTesting(false);
@@ -112,8 +112,8 @@ export default function Settings() {
   }, [dbConfig]);
 
   useEffect(() => {
-    localStorage.setItem('customMysqlConfig', JSON.stringify(mysqlConfig));
-  }, [mysqlConfig]);
+    localStorage.setItem('customPostgresConfig', JSON.stringify(postgresConfig));
+  }, [postgresConfig]);
 
   const handleAddOperator = () => {
     if (newOpUsername.trim() && newOpPassword.trim()) {
@@ -289,12 +289,12 @@ export default function Settings() {
                 <input 
                   type="radio" 
                   name="dbtype" 
-                  value="mysql" 
-                  checked={dbType === 'mysql'} 
-                  onChange={() => setDbType('mysql')}
+                  value="postgres" 
+                  checked={dbType === 'postgres'} 
+                  onChange={() => setDbType('postgres')}
                   className="accent-accent-olive"
                 />
-                <span className="font-medium text-sm">MySQL</span>
+                <span className="font-medium text-sm">Postgres (Supabase)</span>
               </label>
             </div>
             
@@ -303,7 +303,7 @@ export default function Settings() {
                 <p className="text-xs font-bold uppercase text-text-muted mb-1">Stato Connessione Corrente</p>
                 <div className="flex items-center gap-2 font-medium text-emerald-600">
                   <div className="h-2.5 w-2.5 rounded-full bg-emerald-500"></div>
-                  In uso ({dbType === 'firebase' ? 'Firestore' : 'MySQL'})
+                  In uso ({dbType === 'firebase' ? 'Firestore' : 'Postgres / Supabase'})
                 </div>
               </div>
               
@@ -353,54 +353,54 @@ export default function Settings() {
                 </>
               ) : (
                 <>
-                  <div className="p-4 bg-bg-main rounded-2xl border border-border-soft overflow-hidden">
-                    <p className="text-xs font-bold uppercase text-text-muted mb-1 flex justify-between">Host</p>
+                  <div className="p-4 bg-bg-main rounded-2xl border border-border-soft overflow-hidden md:col-span-2">
+                    <p className="text-xs font-bold uppercase text-text-muted mb-1 flex justify-between">Host (Supabase Server)</p>
                     <input 
                       type="text"
-                      value={mysqlConfig.host || ''}
+                      value={postgresConfig.host || ''}
                       onChange={(e) => handleConfigChange('host', e.target.value)}
                       className="w-full bg-transparent font-mono text-sm outline-none border-b border-border-soft focus:border-accent-olive py-1"
-                      placeholder="localhost"
+                      placeholder="db.xxx.supabase.co"
                     />
                   </div>
                   <div className="p-4 bg-bg-main rounded-2xl border border-border-soft overflow-hidden">
                     <p className="text-xs font-bold uppercase text-text-muted mb-1">Port</p>
                     <input 
                       type="number"
-                      value={mysqlConfig.port || ''}
+                      value={postgresConfig.port || ''}
                       onChange={(e) => handleConfigChange('port', e.target.value)}
                       className="w-full bg-transparent font-mono text-sm outline-none border-b border-border-soft focus:border-accent-olive py-1"
-                      placeholder="3306"
+                      placeholder="5432"
+                    />
+                  </div>
+                  <div className="p-4 bg-bg-main rounded-2xl border border-border-soft overflow-hidden">
+                    <p className="text-xs font-bold uppercase text-text-muted mb-1">Database Name</p>
+                    <input 
+                      type="text"
+                      value={postgresConfig.database || ''}
+                      onChange={(e) => handleConfigChange('database', e.target.value)}
+                      className="w-full bg-transparent font-mono text-sm outline-none border-b border-border-soft focus:border-accent-olive py-1"
+                      placeholder="postgres"
                     />
                   </div>
                   <div className="p-4 bg-bg-main rounded-2xl border border-border-soft overflow-hidden">
                     <p className="text-xs font-bold uppercase text-text-muted mb-1">User</p>
                     <input 
                       type="text"
-                      value={mysqlConfig.user || ''}
+                      value={postgresConfig.user || ''}
                       onChange={(e) => handleConfigChange('user', e.target.value)}
                       className="w-full bg-transparent font-mono text-sm outline-none border-b border-border-soft focus:border-accent-olive py-1"
-                      placeholder="root"
+                      placeholder="postgres"
                     />
                   </div>
                   <div className="p-4 bg-bg-main rounded-2xl border border-border-soft overflow-hidden">
                     <p className="text-xs font-bold uppercase text-text-muted mb-1">Password</p>
                     <input 
                       type="password"
-                      value={mysqlConfig.password || ''}
+                      value={postgresConfig.password || ''}
                       onChange={(e) => handleConfigChange('password', e.target.value)}
                       className="w-full bg-transparent font-mono text-sm outline-none border-b border-border-soft focus:border-accent-olive py-1"
                       placeholder="********"
-                    />
-                  </div>
-                  <div className="p-4 bg-bg-main rounded-2xl border border-border-soft overflow-hidden md:col-span-2">
-                    <p className="text-xs font-bold uppercase text-text-muted mb-1">Database Name</p>
-                    <input 
-                      type="text"
-                      value={mysqlConfig.database || ''}
-                      onChange={(e) => handleConfigChange('database', e.target.value)}
-                      className="w-full bg-transparent font-mono text-sm outline-none border-b border-border-soft focus:border-accent-olive py-1"
-                      placeholder="gestione_ore"
                     />
                   </div>
                 </>
