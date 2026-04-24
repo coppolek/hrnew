@@ -2,7 +2,8 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 
 export const syncToFirestore = async (key: string, data: any) => {
-  const dbType = localStorage.getItem('appDbType') || 'postgres'; // default to postgres
+  const defaultDbType = import.meta.env.VITE_DEFAULT_DB_TYPE || 'postgres';
+  const dbType = localStorage.getItem('appDbType') || defaultDbType; // default to postgres
 
   if (dbType === 'postgres') {
     const rawConfig = localStorage.getItem('customPostgresConfig');
@@ -43,7 +44,8 @@ export const syncToFirestore = async (key: string, data: any) => {
 };
 
 export const fetchFromFirestore = async (key: string) => {
-  const dbType = localStorage.getItem('appDbType') || 'postgres'; // default to postgres
+  const defaultDbType = import.meta.env.VITE_DEFAULT_DB_TYPE || 'postgres';
+  const dbType = localStorage.getItem('appDbType') || defaultDbType; // default to postgres
 
   if (dbType === 'postgres') {
     const rawConfig = localStorage.getItem('customPostgresConfig');
@@ -86,4 +88,67 @@ export const fetchFromFirestore = async (key: string) => {
     throw error;
   }
   return null;
+};
+
+export const exportAllData = async () => {
+  const defaultDbType = import.meta.env.VITE_DEFAULT_DB_TYPE || 'postgres';
+  const dbType = localStorage.getItem('appDbType') || defaultDbType;
+
+  if (dbType === 'postgres') {
+    const rawConfig = localStorage.getItem('customPostgresConfig');
+    if (!rawConfig) throw new Error("Nessuna configurazione Postgres trovata.");
+    const config = JSON.parse(rawConfig);
+    if (!config.password) throw new Error("Manca password Supabase.");
+
+    const res = await fetch('/api/db/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config })
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || "Failed to export");
+    return json.data; 
+  } else {
+    // Firebase
+    const { collection, getDocs } = await import('firebase/firestore');
+    const snap = await getDocs(collection(db, 'appData'));
+    const allData: any[] = [];
+    snap.forEach(d => {
+      allData.push({ key: d.id, value: d.data().value });
+    });
+    return allData;
+  }
+};
+
+export const importAllData = async (data: any[]) => {
+  const defaultDbType = import.meta.env.VITE_DEFAULT_DB_TYPE || 'postgres';
+  const dbType = localStorage.getItem('appDbType') || defaultDbType;
+
+  if (dbType === 'postgres') {
+    const rawConfig = localStorage.getItem('customPostgresConfig');
+    if (!rawConfig) throw new Error("Nessuna configurazione Postgres trovata.");
+    const config = JSON.parse(rawConfig);
+    if (!config.password) throw new Error("Manca password Supabase.");
+
+    const res = await fetch('/api/db/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config, data })
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || "Failed to import");
+  } else {
+    for (const item of data) {
+      if (item.key && item.value) {
+        // Need to parse if importing into key-values, but we just use syncToFirestore which expects object. Wait, appData stores {value: stringified}.
+        // If we use stringified values, we need to parse them before syncing
+        try {
+           const parsedValue = JSON.parse(item.value);
+           await syncToFirestore(item.key, parsedValue);
+        } catch(e) {
+           console.error("Failed to parse " + item.key, e);
+        }
+      }
+    }
+  }
 };

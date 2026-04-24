@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Folder, Plus, Trash2, ArrowRight, Settings, LogOut, Users, Shield, X, Save, Search, Bell } from 'lucide-react';
-import { fetchFromFirestore, syncToFirestore } from '../services/db';
+import { Folder, Plus, Trash2, ArrowRight, Settings, LogOut, Users, Shield, X, Save, Search, Bell, Download, UploadCloud } from 'lucide-react';
+import { fetchFromFirestore, syncToFirestore, exportAllData, importAllData } from '../services/db';
 
 const defaultProjects = [
   {
@@ -26,6 +26,56 @@ export default function Dashboard() {
   const [deleteModalProject, setDeleteModalProject] = useState<any>(null);
 
   const [dbError, setDbError] = useState<string | null>(null);
+  const fullImportRef = useRef<HTMLInputElement>(null);
+
+  const handleExportFullDB = async () => {
+    try {
+      const data = await exportAllData();
+      const dataStr = JSON.stringify(data, null, 2);
+      const blob = new Blob([dataStr], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `backup_intero_progetto_${new Date().toISOString().split('T')[0]}.json`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch(e: any) {
+      alert("Errore durante l'esportazione: " + e.message);
+    }
+  };
+
+  const handleImportFullDB = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!window.confirm("Attenzione: questo sovrascriverà/aggiornerà i dati correnti del database! Procedere?")) {
+      e.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const jsonText = event.target?.result as string;
+        const data = JSON.parse(jsonText);
+        
+        if (!Array.isArray(data)) {
+           alert("Formato file non valido. Deve essere un array di oggetti {key, value}. Selezionare un backup intero progetto.");
+           return;
+        }
+
+        await importAllData(data);
+        alert("Importazione completata con successo! La pagina verrà aggiornata.");
+        window.location.reload();
+      } catch (error: any) {
+        alert("Errore durante l'importazione:\n" + error.message);
+      } finally {
+        e.target.value = '';
+      }
+    };
+    reader.readAsText(file);
+  };
 
   useEffect(() => {
     const loadFromDb = async () => {
@@ -225,17 +275,45 @@ export default function Dashboard() {
           </div>
         </header>
 
-        <div className="mb-8 relative max-w-md">
-          <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-            <Search className="h-5 w-5 text-text-muted" />
+        <div className="mb-8 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+          <div className="relative w-full max-w-md">
+            <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+              <Search className="h-5 w-5 text-text-muted" />
+            </div>
+            <input
+              type="text"
+              className="block w-full rounded-xl border border-border-soft bg-card-bg py-2.5 pl-10 pr-4 outline-none focus:border-accent-olive focus:ring-1 focus:ring-accent-olive"
+              placeholder="Cerca progetto..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
           </div>
-          <input
-            type="text"
-            className="block w-full rounded-xl border border-border-soft bg-card-bg py-2.5 pl-10 pr-4 outline-none focus:border-accent-olive focus:ring-1 focus:ring-accent-olive"
-            placeholder="Cerca progetto..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
+
+          {user?.role === 'admin' && (
+            <div className="flex items-center gap-2">
+              <input
+                type="file"
+                accept=".json"
+                ref={fullImportRef}
+                style={{ display: 'none' }}
+                onChange={handleImportFullDB}
+              />
+              <button 
+                onClick={() => fullImportRef.current?.click()}
+                className="flex items-center gap-2 rounded-xl bg-sidebar-bg px-4 py-2 font-medium text-text-main hover:bg-border-soft"
+                title="Importa Intero Database"
+              >
+                <UploadCloud className="h-4 w-4" /> Importa DB
+              </button>
+              <button 
+                onClick={handleExportFullDB}
+                className="flex items-center gap-2 rounded-xl bg-sidebar-bg px-4 py-2 font-medium text-text-main hover:bg-border-soft"
+                title="Esporta Intero Database"
+              >
+                <Download className="h-4 w-4" /> Esporta DB
+              </button>
+            </div>
+          )}
         </div>
         
         {dbError && (
@@ -350,6 +428,37 @@ export default function Dashboard() {
                   >
                     <Save className="h-4 w-4" />
                     Salva Permessi
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Modal */}
+        {deleteModalProject && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-sm rounded-3xl bg-white shadow-lg border border-border-soft">
+              <div className="p-6">
+                <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-500">
+                  <Trash2 className="h-6 w-6" />
+                </div>
+                <h3 className="text-center font-serif text-xl font-bold mb-2">Elimina Progetto</h3>
+                <p className="text-center text-sm text-text-muted mb-6">
+                  Sei sicuro di voler eliminare il progetto <strong>"{deleteModalProject.name}"</strong>? Questa azione non può essere annullata.
+                </p>
+                <div className="flex items-center gap-3">
+                  <button 
+                    onClick={() => setDeleteModalProject(null)}
+                    className="flex-1 rounded-xl bg-sidebar-bg px-4 py-2.5 font-medium text-text-main transition-colors hover:bg-border-soft"
+                  >
+                    Annulla
+                  </button>
+                  <button 
+                    onClick={confirmDeleteProject}
+                    className="flex-1 rounded-xl bg-red-500 px-4 py-2.5 font-medium text-white transition-colors hover:bg-red-600"
+                  >
+                    Elimina
                   </button>
                 </div>
               </div>

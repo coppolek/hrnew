@@ -1108,8 +1108,167 @@ Esempio di output desiderato:
           </div>
         </div>
 
-        {/* Sites Navigation */}
-        <div className="mb-6 flex items-center gap-2 overflow-x-auto pb-2 print:hidden Touch-none-container">
+        {/* --- PRINT ONLY LAYOUT --- */}
+        <div className="hidden print:block pb-12">
+          <h2 className="text-xl font-bold uppercase border-b-2 border-black pb-2 mb-6">Cantiere: {activeSiteName}</h2>
+          
+          {services.map((service: any) => {
+            const ops = operatorStore[`${activeSiteId}_${service.id}`] || [];
+            if (ops.length === 0 && service.name.toUpperCase() !== 'PULIZIE ORDINARIE' && service.name.toUpperCase() !== 'EXTRA') return null;
+
+            const tHours = ops.reduce((tot: number, op: any) => tot + Object.values(op.hours).reduce((s: number, hVal: any) => s + (parseFloat(hVal as string) || 0), 0), 0);
+
+            let summary = null;
+            if (service.name.toUpperCase() === 'PULIZIE ORDINARIE') {
+              summary = (
+                <div className="grid grid-cols-4 gap-4 mt-4 break-inside-avoid">
+                  <div className="border border-black p-3 rounded">
+                    <div className="text-xs uppercase font-bold mb-1">Ore Eseguite</div>
+                    <div className="font-bold text-xl">{formatNumber(tHours)}</div>
+                  </div>
+                  <div className="border border-black p-3 rounded">
+                    <div className="text-xs uppercase font-bold mb-1">Canone Ore</div>
+                    <div className="font-bold text-xl">{currentSettings.canone}</div>
+                  </div>
+                  <div className="border border-black p-3 rounded">
+                    <div className="text-xs uppercase font-bold mb-1">Tariffa €/H</div>
+                    <div className="font-bold text-xl">{currentSettings.ord}</div>
+                  </div>
+                  <div className="border border-black p-3 rounded">
+                    <div className="text-xs uppercase font-bold mb-1">Valore Canone</div>
+                    <div className="font-bold text-xl">{formatNumber(tHours * (parseFloat(currentSettings.ord) || 0))}</div>
+                  </div>
+                </div>
+              );
+            } else if (service.name.toUpperCase() === 'EXTRA') {
+              const ordS = services.find((s: any) => s.name.toUpperCase() === 'PULIZIE ORDINARIE');
+              const ordOps = ordS ? (operatorStore[`${activeSiteId}_${ordS.id}`] || []) : [];
+              const oreOrd = ordOps.reduce((tot: number, op: any) => tot + Object.values(op.hours).reduce((s: number, hVal: any) => s + (parseFloat(hVal as string) || 0), 0), 0);
+              const canoneStr = currentSettings.canone.toString().replace(',', '.');
+              const canoneNum = parseFloat(canoneStr) || 0;
+              let oreExtraDaOrdinarie = 0;
+              if (canoneNum > 0 && oreOrd > canoneNum) {
+                oreExtraDaOrdinarie = oreOrd - canoneNum;
+              }
+              summary = (
+                <div className="grid grid-cols-4 gap-4 mt-4 break-inside-avoid">
+                  <div className="border border-black p-3 rounded bg-orange-50">
+                    <div className="text-xs uppercase font-bold mb-1">Extra da Ordinarie</div>
+                    <div className="font-bold text-xl">{formatNumber(oreExtraDaOrdinarie)}</div>
+                  </div>
+                  <div className="border border-black p-3 rounded bg-orange-50">
+                    <div className="text-xs uppercase font-bold mb-1">Ore Extra Dirette</div>
+                    <div className="font-bold text-xl">{formatNumber(tHours)}</div>
+                  </div>
+                  <div className="border border-black p-3 rounded bg-orange-50">
+                    <div className="text-xs uppercase font-bold mb-1">Tariffa Extra €/H</div>
+                    <div className="font-bold text-xl">{currentSettings.ext}</div>
+                  </div>
+                  <div className="border border-black p-3 rounded bg-orange-50">
+                    <div className="text-xs uppercase font-bold mb-1">Valore Extra</div>
+                    <div className="font-bold text-xl">{formatNumber((tHours + oreExtraDaOrdinarie) * (parseFloat(currentSettings.ext) || 0))}</div>
+                  </div>
+                </div>
+              );
+            }
+
+            return (
+              <div key={service.id} className="mb-12 break-inside-avoid">
+                <h3 className="font-bold text-lg uppercase mb-4 py-1 bg-gray-100 px-2 rounded">{service.name}</h3>
+                <table className="w-full border-collapse text-[11px] mb-2">
+                  <thead>
+                    <tr>
+                      <th className="border border-black p-1 text-left font-bold w-48 truncate">Operatore</th>
+                      {Array.from({ length: daysInMonth }).map((_, i) => (
+                        <th key={i} className={cn("border border-black p-1 text-center font-bold w-6", isWeekend(i) && "bg-gray-200")}>
+                          {i+1}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ops.map((op: any) => (
+                      <tr key={op.id}>
+                        <td className="border border-black p-1 font-medium truncate whitespace-nowrap max-w-[12rem]">{op.operatorName}</td>
+                        {Array.from({ length: daysInMonth }).map((_, i) => {
+                          const h = op.hours[i] || '';
+                          return <td key={i} className={cn("border border-black p-1 text-center font-bold", isWeekend(i) && "bg-gray-50")}>{h}</td>
+                        })}
+                      </tr>
+                    ))}
+                    {ops.length === 0 && (
+                      <tr>
+                        <td colSpan={daysInMonth + 1} className="border border-black p-4 text-center italic text-gray-500">Nessun operatore inserito</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+                {summary}
+              </div>
+            );
+          })}
+
+          {/* Noleggi & Derattizzazione layout below */}
+          <div className="grid grid-cols-2 gap-8 mt-8 break-inside-avoid">
+            <div>
+              <h3 className="font-bold text-lg uppercase mb-2 border-b-2 border-black pb-1">Noleggi</h3>
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                   <tr className="border-b border-black">
+                     <th className="text-left py-1">Descrizione</th>
+                     <th className="text-right py-1">Importo (€)</th>
+                   </tr>
+                </thead>
+                <tbody>
+                  {rentals.map(r => (
+                    <tr key={r.id} className="border-b border-gray-300">
+                      <td className="py-1">{r.description}</td>
+                      <td className="text-right py-1">€ {formatNumber(parseFloat(r.amount) || 0)}</td>
+                    </tr>
+                  ))}
+                  {rentals.length === 0 && <tr><td colSpan={2} className="py-2 text-center italic text-gray-500">Nessuna voce</td></tr>}
+                </tbody>
+                <tfoot>
+                  <tr className="font-bold">
+                     <td className="py-2">TOTALE</td>
+                     <td className="text-right py-2">€ {formatNumber(totalRentals)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            <div>
+              <h3 className="font-bold text-lg uppercase mb-2 border-b-2 border-black pb-1">Derattizzazione</h3>
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                   <tr className="border-b border-black">
+                     <th className="text-left py-1">Descrizione</th>
+                     <th className="text-right py-1">Importo (€)</th>
+                   </tr>
+                </thead>
+                <tbody>
+                  {deratizations.map(d => (
+                    <tr key={d.id} className="border-b border-gray-300">
+                      <td className="py-1">{d.description}</td>
+                      <td className="text-right py-1">€ {formatNumber(parseFloat(d.amount) || 0)}</td>
+                    </tr>
+                  ))}
+                  {deratizations.length === 0 && <tr><td colSpan={2} className="py-2 text-center italic text-gray-500">Nessuna voce</td></tr>}
+                </tbody>
+                <tfoot>
+                  <tr className="font-bold">
+                     <td className="py-2">TOTALE</td>
+                     <td className="text-right py-2">€ {formatNumber(totalDeratizations)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+        {/* --- FINE PRINT ONLY LAYOUT --- */}
+
+        <div className="print:hidden">
+          {/* Sites Navigation */}
+          <div className="mb-6 flex items-center gap-2 overflow-x-auto pb-2 Touch-none-container">
           <DndContext 
             sensors={sensors}
             collisionDetection={closestCenter}
@@ -1461,6 +1620,7 @@ Esempio di output desiderato:
             </div>
           </div>
           )}
+        </div>
         </div>
       </div>
 

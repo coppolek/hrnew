@@ -111,6 +111,54 @@ async function startServer() {
     }
   });
 
+  app.post("/api/db/export", async (req, res) => {
+    const { config } = req.body;
+    try {
+      if (!config || !config.host) return res.status(400).json({ error: "Missing config" });
+      const pool = getDbPool(config);
+      await ensureTableExists(pool);
+      
+      const result = await pool.query(`SELECT key, value FROM app_data`);
+      res.json({ success: true, data: result.rows });
+    } catch (error: any) {
+      console.error("DB Export error:", error.message);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  app.post("/api/db/import", async (req, res) => {
+    const { config, data } = req.body;
+    try {
+      if (!config || !config.host) return res.status(400).json({ error: "Missing config" });
+      const pool = getDbPool(config);
+      await ensureTableExists(pool);
+      
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        for (const item of data) {
+           await client.query(
+             `INSERT INTO app_data (key, value, updated_at) 
+              VALUES ($1, $2, CURRENT_TIMESTAMP) 
+              ON CONFLICT (key) 
+              DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP`,
+             [item.key, item.value]
+           );
+        }
+        await client.query('COMMIT');
+        res.json({ success: true });
+      } catch(e) {
+        await client.query('ROLLBACK');
+        throw e;
+      } finally {
+        client.release();
+      }
+    } catch (error: any) {
+      console.error("DB Import error:", error.message);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

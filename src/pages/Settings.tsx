@@ -13,7 +13,8 @@ export default function Settings() {
   const [isTesting, setIsTesting] = useState(false);
   const [dbType, setDbType] = useState(() => {
     const saved = localStorage.getItem('appDbType');
-    return saved ? saved : 'postgres';
+    const defaultType = import.meta.env.VITE_DEFAULT_DB_TYPE || 'postgres';
+    return saved ? saved : defaultType;
   });
   
   const [operators, setOperators] = useState<{id: string, username: string, password: string}[]>([]);
@@ -73,7 +74,20 @@ export default function Settings() {
           new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout dopo 5 secondi')), 5000))
         ]);
         
-        alert('Connessione a Firebase riuscita, lettura e scrittura completate senza limitazioni!');
+        alert('Connessione a Firebase riuscita, lettura e scrittura completate senza limitazioni! Il database è ora impostato a livello globale per tutti i dispositivi.');
+        
+        try {
+           const { setDoc } = await import('firebase/firestore');
+           await setDoc(doc(tempDb, 'appData', 'globalDbConfig'), {
+              value: JSON.stringify({
+                 dbType: 'firebase'
+              }),
+              updatedAt: new Date().toISOString()
+           });
+        } catch(e) {
+           console.error("Failed to sync global config", e);
+        }
+
         await deleteApp(tempApp);
       } catch (err: any) {
         alert('Errore di connessione o permessi limitati in Firebase:\\n' + err.message);
@@ -87,7 +101,19 @@ export default function Settings() {
         });
         const data = await res.json();
         if (data.success) {
-          alert('Connessione a Postgres (Supabase) riuscita!');
+          alert('Connessione a Postgres (Supabase) riuscita! Il database è ora impostato a livello globale per tutti i dispositivi.');
+          try {
+             const { setDoc } = await import('firebase/firestore');
+             await setDoc(doc(getFirestore(initializeApp(activeFirebaseConfig, 'global-sync-' + Date.now())), 'appData', 'globalDbConfig'), {
+                value: JSON.stringify({
+                   dbType: 'postgres',
+                   postgresConfig: postgresConfig
+                }),
+                updatedAt: new Date().toISOString()
+             });
+          } catch(e) {
+             console.error("Failed to sync global config", e);
+          }
         } else {
           alert('Errore di connessione a Postgres:\\n' + data.error);
         }
