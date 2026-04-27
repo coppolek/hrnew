@@ -289,6 +289,132 @@ const fetchStoredDataForMonthYear = async (projectId: string, year: number, mont
   return defaultProjectData;
 };
 
+const parseCSVLine = (line: string, separator: string = ';'): string[] => {
+  const result = [];
+  let isInsideQuotes = false;
+  let currentVal = '';
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"' && (i === 0 || line[i - 1] !== '\\')) {
+      isInsideQuotes = !isInsideQuotes;
+    } else if (char === separator && !isInsideQuotes) {
+      result.push(currentVal.trim());
+      currentVal = '';
+    } else {
+      currentVal += char;
+    }
+  }
+  result.push(currentVal.trim());
+  return result;
+};
+
+const parseDeterministicCSV = (csvText: string) => {
+  const lines = csvText.split(/\r?\n/);
+  if (lines.length < 2) return null;
+  
+  const separator = lines[0].includes(';') ? ';' : ',';
+  const headers = parseCSVLine(lines[0], separator);
+  
+  let colGruppo = -1;
+  let colLavoratore = -1;
+  const dayColumns: { day: number, index: number }[] = [];
+  
+  headers.forEach((h, i) => {
+    let hr = h.toLowerCase().replace(/['"]/g, '').trim();
+    if (hr === 'gruppo') colGruppo = i;
+    if (hr === 'lavoratore') colLavoratore = i;
+    
+    // check if it's a day, e.g. "mer 1", "gio 2", or "1", "2"
+    const dayMatch = hr.match(/(?:lun|mar|mer|gio|ven|sab|dom)?\s*(\d{1,2})$/i);
+    // Ignore summary columns like "Sett. 14" vs "mer 1"
+    // "Sett." matches if we don't exclude it, wait: dayMatch will match "Sett. 14" -> "14"
+    // So let's refine:
+    if (hr.startsWith('sett.')) return; 
+    
+    if (dayMatch) {
+       dayColumns.push({ day: parseInt(dayMatch[1], 10), index: i });
+    }
+  });
+
+  if (colGruppo === -1 || colLavoratore === -1 || dayColumns.length === 0) {
+      return null;
+  }
+
+  const entries: any[] = [];
+  let currentCantiere = "SCONOSCIUTO";
+  let currentServizio = "PULIZIE ORDINARIE";
+
+  for (let i = 1; i < lines.length; i++) {
+     const line = lines[i].trim();
+     if (!line) continue;
+     const row = parseCSVLine(line, separator);
+     
+     const rawGruppo = row[colGruppo]?.replace(/['"]/g, '').trim();
+     if (rawGruppo && rawGruppo !== '') {
+        const gruppoVal = rawGruppo;
+        let parts = gruppoVal.split(' - ');
+        if (parts.length >= 2) {
+            let first = parts[0].replace(/->\s*Servizio:\s*/i, '').trim();
+            if (parts.length === 2) {
+               currentCantiere = first;
+               currentServizio = parts[1].trim();
+            } else if (parts.length >= 3) {
+               currentCantiere = first + " - " + parts[1].trim();
+               currentServizio = parts[parts.length-1].trim();
+            }
+        } else {
+            currentCantiere = gruppoVal.replace(/->\s*Servizio:\s*/i, '').trim();
+            currentServizio = "PULIZIE ORDINARIE";
+        }
+     }
+     
+     const rawLavoratore = row[colLavoratore]?.replace(/['"]/g, '').trim();
+     if (rawLavoratore && rawLavoratore !== '') {
+         const operatore = rawLavoratore;
+         
+         dayColumns.forEach(dc => {
+             let oreValStr = row[dc.index]?.replace(/['"]/g, '').trim() || '';
+             if (oreValStr) {
+                let oreStr = oreValStr;
+                if (oreStr.includes('/')) {
+                   const stringDesc = oreStr.split('/')[1].trim();
+                   oreStr = oreStr.split('/')[0].trim();
+                   if (oreStr === '0:00' && stringDesc) {
+                      const reason = stringDesc.toUpperCase();
+                      if (reason.includes("FERI")) oreStr = "F";
+                      else if (reason.includes("MALAT")) oreStr = "M";
+                      else if (reason.includes("FESTIV")) oreStr = "FE";
+                      else if (reason.includes("PERMESSO")) oreStr = "P";
+                      else if (reason.includes("INFORT")) oreStr = "I";
+                      else if (reason.includes("LEGGE 104")) oreStr = "104";
+                      else oreStr = stringDesc.substring(0, 2);
+                   }
+                }
+                
+                if (oreStr.match(/^\d+:\d{2}$/)) {
+                    let [h, m] = oreStr.split(':');
+                    let decM = parseInt(m) / 60;
+                    oreStr = (parseInt(h) + decM).toString();
+                }
+
+                if (oreStr && oreStr !== '0' && oreStr !== '0:00' && oreStr !== '0.00' && oreStr !== '0.0') {
+                    entries.push({
+                        cantiere: currentCantiere,
+                        servizio: currentServizio,
+                        operatore: operatore,
+                        giorno: dc.day,
+                        ore: oreStr
+                    });
+                }
+             }
+         });
+     }
+  }
+  
+  if (entries.length > 0) return { entries };
+  return null;
+};
+
 export default function ProjectDetails() {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -906,26 +1032,37 @@ export default function ProjectDetails() {
         throw new Error("Formato non supportato. Usa CSV, PDF, XLS, o XLSX.");
       }
 
-      setImportStatus('Elaborazione intelligente AI...');
-      const fallbackKey = typeof process !== 'undefined' && process.env ? process.env.GEMINI_API_KEY : undefined;
-      const customKey = localStorage.getItem('customGeminiApiKey');
-      const finalApiKey = customKey || fallbackKey;
-      
-      if (!finalApiKey) {
-        throw new Error("API Key Gemini non trovata. Per favore inseriscila nella pagina Impostazioni.");
-      }
-      
-      const ai = new GoogleGenAI({ apiKey: finalApiKey });
-      // Build exactly the contents parts based on Mimetype
-      const parts = [];
-      if (mimeType === 'application/pdf') {
-          parts.push({ inlineData: { data: fileContent, mimeType: 'application/pdf' } });
-      } else {
-          parts.push({ text: `Dati raw da file importato:\n\n${fileContent}` });
+      let data: any = null;
+
+      // Try deterministic parsing first for CSV/Excel
+      if (mimeType !== 'application/pdf') {
+          const parsed = parseDeterministicCSV(fileContent);
+          if (parsed && parsed.entries.length > 0) {
+              data = parsed;
+          }
       }
 
-      parts.push({
-        text: `Questo è un registro presenze/ore dei lavoratori. 
+      if (!data) {
+        setImportStatus('Elaborazione intelligente AI...');
+        const fallbackKey = typeof process !== 'undefined' && process.env ? process.env.GEMINI_API_KEY : undefined;
+        const customKey = localStorage.getItem('customGeminiApiKey');
+        const finalApiKey = customKey || fallbackKey;
+        
+        if (!finalApiKey) {
+          throw new Error("API Key Gemini non trovata. Per favore inseriscila nella pagina Impostazioni o utilizza un file con formato standard Zucchetti.");
+        }
+        
+        const ai = new GoogleGenAI({ apiKey: finalApiKey });
+        // Build exactly the contents parts based on Mimetype
+        const parts = [];
+        if (mimeType === 'application/pdf') {
+            parts.push({ inlineData: { data: fileContent, mimeType: 'application/pdf' } });
+        } else {
+            parts.push({ text: `Dati raw da file importato:\n\n${fileContent}` });
+        }
+
+        parts.push({
+          text: `Questo è un registro presenze/ore dei lavoratori. 
 Individua i lavoratori, in che cantiere lavorano, per quale servizio (se non specificato mettili nel servizio "PULIZIE ORDINARIE"), e le loro ore giorno per giorno per il mese corrente.
 Ritorna i dati in JSON. Il giorno è un numero da 1 a 31. Le ore sono in formato decimale.
 Attenzione, se ci sono lettere al posto delle ore (come 'm' per malattia o 'f' per ferie, riportali testualmente o ignora se non pertinenti al registro ore).
@@ -936,38 +1073,39 @@ Esempio di output desiderato:
     { "cantiere": "Alpha Srl", "servizio": "PULIZIE ORDINARIE", "operatore": "Mario Rossi", "giorno": 1, "ore": "4.5" }
   ]
 }`
-      });
+        });
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents: { parts: parts },
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              entries: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    cantiere: { type: Type.STRING },
-                    servizio: { type: Type.STRING },
-                    operatore: { type: Type.STRING },
-                    giorno: { type: Type.INTEGER },
-                    ore: { type: Type.STRING }
-                  },
-                  required: ["cantiere", "servizio", "operatore", "giorno", "ore"]
+        const response = await ai.models.generateContent({
+          model: "gemini-3.1-pro-preview",
+          contents: { parts: parts },
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                entries: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      cantiere: { type: Type.STRING },
+                      servizio: { type: Type.STRING },
+                      operatore: { type: Type.STRING },
+                      giorno: { type: Type.INTEGER },
+                      ore: { type: Type.STRING }
+                    },
+                    required: ["cantiere", "servizio", "operatore", "giorno", "ore"]
+                  }
                 }
-              }
-            },
-            required: ["entries"]
+              },
+              required: ["entries"]
+            }
           }
-        }
-      });
+        });
 
-      const jsonStr = response.text?.trim() || "";
-      const data = JSON.parse(jsonStr);
+        const jsonStr = response.text?.trim() || "";
+        data = JSON.parse(jsonStr);
+      }
       
       setImportStatus('Sincronizzazione dati in corso...');
       
