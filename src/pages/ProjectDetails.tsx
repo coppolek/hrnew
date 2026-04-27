@@ -1252,11 +1252,12 @@ Esempio di output desiderato:
           
           {services.map((service: any) => {
             const ops = operatorStore[`${activeSiteId}_${service.id}`] || [];
-            if (ops.length === 0 && service.name.toUpperCase() !== 'PULIZIE ORDINARIE' && service.name.toUpperCase() !== 'EXTRA') return null;
 
             const tHours = ops.reduce((tot: number, op: any) => tot + Object.values(op.hours).reduce((s: number, hVal: any) => s + (parseFloat(hVal as string) || 0), 0), 0);
 
             let summary = null;
+            let skipRender = false;
+            
             if (service.name.toUpperCase() === 'PULIZIE ORDINARIE') {
               summary = (
                 <div className="grid grid-cols-4 gap-4 mt-4 break-inside-avoid">
@@ -1288,37 +1289,46 @@ Esempio di output desiderato:
               if (canoneNum > 0 && oreOrd > canoneNum) {
                 oreExtraDaOrdinarie = oreOrd - canoneNum;
               }
-              summary = (
-                <div className="grid grid-cols-4 gap-4 mt-4 break-inside-avoid">
-                  <div className="border border-black p-3 rounded bg-orange-50">
-                    <div className="text-xs uppercase font-bold mb-1">Extra da Ordinarie</div>
-                    <div className="font-bold text-xl">{formatNumber(oreExtraDaOrdinarie)}</div>
-                  </div>
-                  <div className="border border-black p-3 rounded bg-orange-50">
-                    <div className="text-xs uppercase font-bold mb-1">Ore Extra Dirette</div>
-                    <div className="font-bold text-xl">{formatNumber(tHours)}</div>
-                  </div>
-                  <div className="border border-black p-3 rounded bg-orange-50">
-                    <div className="text-xs uppercase font-bold mb-1">Tariffa Extra €/H</div>
-                    <div className="font-bold text-xl">{currentSettings.ext}</div>
-                  </div>
-                  <div className="border border-black p-3 rounded bg-orange-50">
-                    <div className="text-xs uppercase font-bold mb-1">Valore Extra</div>
-                    <div className="font-bold text-xl">{formatNumber((tHours + oreExtraDaOrdinarie) * (parseFloat(currentSettings.ext) || 0))}</div>
-                  </div>
-                </div>
-              );
+              const totalValoreExtra = (tHours + oreExtraDaOrdinarie) * (parseFloat(currentSettings.ext) || 0);
+
+              if (totalValoreExtra === 0 && ops.length === 0) {
+                 skipRender = true;
+              } else if (totalValoreExtra > 0 || tHours > 0 || oreExtraDaOrdinarie > 0) {
+                  summary = (
+                    <div className="grid grid-cols-4 gap-4 mt-4 break-inside-avoid">
+                      <div className="border border-black p-3 rounded bg-orange-50">
+                        <div className="text-xs uppercase font-bold mb-1">Extra da Ordinarie</div>
+                        <div className="font-bold text-xl">{formatNumber(oreExtraDaOrdinarie)}</div>
+                      </div>
+                      <div className="border border-black p-3 rounded bg-orange-50">
+                        <div className="text-xs uppercase font-bold mb-1">Ore Extra Dirette</div>
+                        <div className="font-bold text-xl">{formatNumber(tHours)}</div>
+                      </div>
+                      <div className="border border-black p-3 rounded bg-orange-50">
+                        <div className="text-xs uppercase font-bold mb-1">Tariffa Extra €/H</div>
+                        <div className="font-bold text-xl">{currentSettings.ext}</div>
+                      </div>
+                      <div className="border border-black p-3 rounded bg-orange-50">
+                        <div className="text-xs uppercase font-bold mb-1">Valore Extra</div>
+                        <div className="font-bold text-xl">{formatNumber(totalValoreExtra)}</div>
+                      </div>
+                    </div>
+                  );
+              }
             }
+
+            if (skipRender) return null;
+            if (ops.length === 0 && !summary) return null;
 
             return (
               <div key={service.id} className="mb-12 break-inside-avoid">
-                <h3 className="font-bold text-lg uppercase mb-4 py-1 bg-gray-100 px-2 rounded">{service.name}</h3>
+                <h3 className="font-bold text-lg uppercase mb-4 py-1 px-2 rounded border border-black/20">{service.name}</h3>
                 <table className="w-full border-collapse text-[11px] mb-2">
                   <thead>
                     <tr>
                       <th className="border border-black p-1 text-left font-bold w-48 truncate">Operatore</th>
                       {Array.from({ length: daysInMonth }).map((_, i) => (
-                        <th key={i} className={cn("border border-black p-1 text-center font-bold w-6", isWeekend(i) && "bg-gray-200")}>
+                        <th key={i} className={cn("border border-black p-1 text-center font-bold w-6", isWeekend(i) && "text-gray-500")}>
                           {i+1}
                         </th>
                       ))}
@@ -1330,7 +1340,7 @@ Esempio di output desiderato:
                         <td className="border border-black p-1 font-medium truncate whitespace-nowrap max-w-[12rem]">{op.operatorName}</td>
                         {Array.from({ length: daysInMonth }).map((_, i) => {
                           const h = op.hours[i] || '';
-                          return <td key={i} className={cn("border border-black p-1 text-center font-bold", isWeekend(i) && "bg-gray-50")}>{h}</td>
+                          return <td key={i} className={cn("border border-black p-1 text-center font-bold", isWeekend(i) && "text-gray-500")}>{h}</td>
                         })}
                       </tr>
                     ))}
