@@ -36,6 +36,66 @@ export default function Settings() {
   const [newOpPassword, setNewOpPassword] = useState('');
   
   const [customGeminiKey, setCustomGeminiKey] = useState(() => localStorage.getItem('customGeminiApiKey') || '');
+  const [openRouterModel, setOpenRouterModel] = useState(() => {
+    let saved = localStorage.getItem('openRouterModel') || 'internal_gemini';
+    if (saved === 'google/gemini-2.0-flash-lite-preview-02-05:free' || saved === 'meta-llama/llama-3.3-70b-instruct:free') {
+        // Switch old defaults to the internal one
+        saved = 'internal_gemini';
+    }
+    return saved;
+  });
+  const [isTestingModel, setIsTestingModel] = useState(false);
+  const [modelTestResult, setModelTestResult] = useState<{success: boolean, message: string} | null>(null);
+
+  const testOpenRouterConnection = async () => {
+    setIsTestingModel(true);
+    setModelTestResult(null);
+    try {
+      if (openRouterModel === 'internal_gemini') {
+          const res = await fetch('/api/gemini', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'gemini-2.5-flash', messages: [{role: 'user', content: 'hello'}] })
+          });
+          if (!res.ok) {
+              const str = await res.text();
+              throw new Error(str);
+          }
+          setModelTestResult({ success: true, message: "Connessione riuscita! Il modello integrato funziona." });
+          return;
+      }
+      
+      if (!customGeminiKey || !customGeminiKey.startsWith('sk-or-v1')) {
+        throw new Error("API Key non valida. Deve iniziare con sk-or-v1");
+      }
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${customGeminiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": window.location.origin,
+          "X-Title": "SCM Gestione Presenze"
+        },
+        body: JSON.stringify({
+          model: openRouterModel,
+          messages: [{ role: "user", content: "Test ping. Answer 'pong'." }],
+          max_tokens: 10
+        })
+      });
+      if (!response.ok) {
+        const errStr = await response.text();
+        let errObj;
+        try { errObj = JSON.parse(errStr); } catch (e) {}
+        const msg = errObj?.error?.message || errObj?.message || errStr || "Errore nella richiesta a OpenRouter";
+        throw new Error(msg);
+      }
+      setModelTestResult({ success: true, message: "Connessione riuscita! Il modello funziona." });
+    } catch (e: any) {
+      setModelTestResult({ success: false, message: e.message || "Errore di connessione" });
+    } finally {
+      setIsTestingModel(false);
+    }
+  };
 
   const [dbConfig, setDbConfig] = useState(activeFirebaseConfig);
   const [postgresConfig, setPostgresConfig] = useState(() => {
@@ -135,6 +195,10 @@ export default function Settings() {
   useEffect(() => {
     localStorage.setItem('customGeminiApiKey', customGeminiKey);
   }, [customGeminiKey]);
+
+  useEffect(() => {
+    localStorage.setItem('openRouterModel', openRouterModel);
+  }, [openRouterModel]);
 
   useEffect(() => {
     localStorage.setItem('customFirebaseConfig', JSON.stringify(dbConfig));
@@ -268,17 +332,49 @@ export default function Settings() {
             
             <div className="space-y-4">
               <div>
-                <label className="mb-2 block text-sm font-medium uppercase text-text-muted">Chiave API Gemini (Opzionale)</label>
+                <label className="mb-2 block text-sm font-medium uppercase text-text-muted">Chiave API OpenRouter</label>
                 <input 
                   type="password" 
                   value={customGeminiKey}
-                  placeholder="Inserisci la tua API Key Gemini..."
+                  placeholder="Inserisci la tua API Key OpenRouter (sk-or-v1-...)"
                   onChange={(e) => setCustomGeminiKey(e.target.value)}
-                  className="w-full rounded-xl border border-border-soft lg:w-2/3 bg-white px-4 py-3 font-medium text-text-main outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
+                  disabled={openRouterModel === 'internal_gemini'}
+                  className="w-full rounded-xl border border-border-soft lg:w-2/3 bg-white px-4 py-3 font-medium text-text-main outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 disabled:opacity-50"
                 />
                 <p className="mt-2 text-xs text-text-muted">
-                  E' già configurata una API Key di sistema gratuita. Se ricevi errori di "Quota superata" durante le importazioni di file o desideri usare la tua chiave Google Gemini, inseriscila qui.
+                  Opzionale se usi il modello integrato. Altrimenti inserisci una chiave API di OpenRouter.
                 </p>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium uppercase text-text-muted">Modello AI Gratuito</label>
+                <select
+                  value={openRouterModel}
+                  onChange={(e) => setOpenRouterModel(e.target.value)}
+                  className="w-full rounded-xl border border-border-soft lg:w-2/3 bg-white px-4 py-3 font-medium text-text-main outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
+                >
+                  <option value="internal_gemini">Modello Google Gemini (Integrato nel sistema, Nessuna API Key richiesta)</option>
+                  <option value="meta-llama/llama-3.3-70b-instruct:free">Llama 3.3 70B Instruct (OpenRouter)</option>
+                  <option value="google/gemini-2.0-pro-exp-02-05:free">Gemini 2.0 Pro Experimental (OpenRouter)</option>
+                  <option value="google/gemma-2-9b-it:free">Gemma 2 9B IT (OpenRouter)</option>
+                  <option value="mistralai/mistral-nemo:free">Mistral Nemo (OpenRouter)</option>
+                </select>
+              </div>
+
+              <div className="pt-2 flex items-center gap-3">
+                <button
+                  onClick={testOpenRouterConnection}
+                  disabled={isTestingModel || (openRouterModel !== 'internal_gemini' && !customGeminiKey)}
+                  className="flex items-center gap-2 rounded-xl bg-purple-600 px-6 py-2.5 font-bold text-white transition-colors hover:bg-purple-700 disabled:opacity-50"
+                >
+                  {isTestingModel ? <span className="animate-spin text-xl">↻</span> : <ShieldAlert className="h-4 w-4" />}
+                  Testa Connessione
+                </button>
+                {modelTestResult && (
+                  <span className={`text-sm font-medium ${modelTestResult.success ? 'text-green-600' : 'text-red-500'}`}>
+                    {modelTestResult.message}
+                  </span>
+                )}
               </div>
             </div>
           </div>

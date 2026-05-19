@@ -1,10 +1,14 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Download, Printer, UserPlus, Trash2, Plus, Building2, Briefcase, X, Pencil, GripVertical, CheckCircle2, Clock, Upload, Loader2, Sparkles, Database, UploadCloud, Copy, ClipboardPaste } from 'lucide-react';
+import { ArrowLeft, Download, Printer, UserPlus, Trash2, Plus, Building2, Briefcase, X, Pencil, GripVertical, CheckCircle2, Clock, Upload, Loader2, Sparkles, Database, UploadCloud, Copy, ClipboardPaste, Wand2, AlertTriangle } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { OperatorRecord } from '../types';
 import { GoogleGenAI, Type } from "@google/genai";
 import * as xlsx from 'xlsx';
+import * as pdfjsLib from 'pdfjs-dist';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+
 import { fetchFromFirestore, syncToFirestore } from '../services/db';
 import {
   DndContext,
@@ -44,52 +48,63 @@ function SortableNavItem({ id, isActive, isEditing, name, editingName, setEditin
   };
 
   return (
-    <button
+    <div
       ref={setNodeRef}
       style={style}
-      onClick={() => onSelect(id)}
       className={cn(
-        "whitespace-nowrap rounded-full border px-4 py-2 text-sm font-medium uppercase transition-colors shrink-0 flex items-center gap-2 relative group touch-none select-none",
+        "whitespace-nowrap rounded-full border text-sm uppercase transition-all shrink-0 flex items-center relative group touch-none select-none",
         isActive 
-          ? "border-accent-olive bg-accent-olive text-white" 
-          : "border-border-soft bg-card-bg text-text-muted hover:border-accent-olive/50"
+          ? "border-accent-olive bg-accent-olive text-white shadow-md ring-2 ring-accent-olive ring-offset-2 ring-offset-bg-main font-bold" 
+          : "border-border-soft bg-card-bg text-text-muted hover:border-accent-olive/50 hover:bg-black/5 font-medium"
       )}
-      {...attributes}
-      {...listeners}
     >
-      {isEditing ? (
-        <input 
-          autoFocus
-          value={editingName} 
-          onChange={e => setEditingName(e.target.value)}
-          onBlur={onSaveEdit}
-          onKeyDown={e => e.key === 'Enter' && onSaveEdit()}
-          onPointerDown={e => e.stopPropagation()}
-          className="bg-transparent outline-none text-white w-full min-w-[120px]"
-        />
-      ) : (
-        <span>{name}</span>
-      )}
+      <div 
+        {...attributes}
+        {...listeners}
+        className="flex items-center justify-center p-2 cursor-grab active:cursor-grabbing hover:bg-black/10 rounded-l-full opacity-60 hover:opacity-100 transition-colors"
+      >
+        <GripVertical className="h-4 w-4" />
+      </div>
+      <button
+        type="button"
+        onClick={(e) => { e.preventDefault(); onSelect(id); }}
+        onPointerDown={(e) => { e.stopPropagation(); onSelect(id); }}
+        className="pr-4 py-2 flex-grow h-full text-left outline-none"
+      >
+        {isEditing ? (
+          <input 
+            autoFocus
+            value={editingName} 
+            onChange={e => setEditingName(e.target.value)}
+            onBlur={onSaveEdit}
+            onKeyDown={e => e.key === 'Enter' && onSaveEdit()}
+            onPointerDown={e => e.stopPropagation()}
+            className="bg-transparent outline-none text-white w-full min-w-[120px]"
+          />
+        ) : (
+          <span>{name}</span>
+        )}
+      </button>
 
       {isActive && !isEditing && (onStartEdit || onDelete) && (
-        <div className="ml-1 flex items-center gap-1.5 border-l border-white/20 pl-2">
+        <div className="ml-1 mr-2 flex items-center gap-1.5 border-l border-white/20 pl-2">
           {onStartEdit && (
             <Pencil 
-              className="h-3.5 w-3.5 cursor-pointer hover:text-white/80 transition-colors" 
+              className="h-3.5 w-3.5 cursor-pointer hover:text-white/80 transition-colors pointer-events-auto" 
               onPointerDown={(e) => { e.stopPropagation(); onStartEdit(); }} 
               onClick={(e) => { e.stopPropagation(); onStartEdit(); }}
             />
           )}
           {onDelete && (
             <Trash2 
-              className="h-3.5 w-3.5 cursor-pointer text-red-200 hover:text-red-100 transition-colors" 
+              className="h-3.5 w-3.5 cursor-pointer text-red-200 hover:text-red-100 transition-colors pointer-events-auto" 
               onPointerDown={(e) => { e.stopPropagation(); onDelete(); }}
               onClick={(e) => { e.stopPropagation(); onDelete(); }} 
             />
           )}
         </div>
       )}
-    </button>
+    </div>
   );
 }
 
@@ -131,7 +146,7 @@ function SortableSummaryCard({ id, isReadOnly, children, className }: any) {
   );
 }
 
-function SortableOperatorRow({ op, isReadOnly, daysInMonth, isWeekend, handleDeleteOperator, handleUpdateHours, cn }: any) {
+function SortableOperatorRow({ op, isReadOnly, daysInMonth, isWeekend, activeYear, monthIndex, handleDeleteOperator, handleUpdateHours, cn }: any) {
   const {
     attributes,
     listeners,
@@ -169,7 +184,24 @@ function SortableOperatorRow({ op, isReadOnly, daysInMonth, isWeekend, handleDel
           <span className="font-medium uppercase whitespace-nowrap">{op.operatorName}</span>
         </div>
       </td>
-      {Array.from({ length: daysInMonth }).map((_, i) => (
+      {Array.from({ length: daysInMonth }).map((_, i) => {
+        let hasMismatch = false;
+        if (activeYear !== undefined && monthIndex !== undefined) {
+           const wday = new Date(activeYear, monthIndex, i + 1).getDay();
+           const dayKey = wday === 0 ? 'DOM' : wday === 1 ? 'LUN' : wday === 2 ? 'MAR' : wday === 3 ? 'MER' : wday === 4 ? 'GIO' : wday === 5 ? 'VEN' : 'SAB';
+           
+           const val = parseFloat(String(op.hours[i] || '0').replace(',', '.'));
+           const parsedVal = isNaN(val) ? 0 : val;
+           
+           const planVal = parseFloat(String(op.basePlan?.[dayKey] || '0').replace(',', '.'));
+           const parsedPlanVal = isNaN(planVal) ? 0 : planVal;
+
+           if (parsedVal > 0 && parsedVal !== parsedPlanVal) {
+              hasMismatch = true;
+           }
+        }
+
+        return (
         <td key={i} className="p-1 text-center bg-card-bg">
           <input
             type="text"
@@ -177,16 +209,17 @@ function SortableOperatorRow({ op, isReadOnly, daysInMonth, isWeekend, handleDel
             className={cn(
               "w-full min-w-[28px] h-8 text-center rounded outline-none transition-colors",
               op.hours[i] 
-                ? "font-bold text-text-main bg-sidebar-bg focus:bg-white focus:ring-1 focus:ring-accent-olive print:bg-transparent print:ring-0" 
+                ? (hasMismatch ? "font-bold text-text-main bg-yellow-100 focus:bg-yellow-50 focus:ring-1 focus:ring-accent-olive print:bg-yellow-100 print:ring-0" : "font-bold text-text-main bg-sidebar-bg focus:bg-white focus:ring-1 focus:ring-accent-olive print:bg-transparent print:ring-0")
                 : "text-text-muted bg-transparent hover:bg-sidebar-bg/50 focus:bg-white focus:ring-1 focus:ring-accent-olive print:hidden",
-              isReadOnly && "focus:ring-0 focus:bg-transparent cursor-default"
+              isReadOnly && "focus:ring-0 cursor-default",
+              isReadOnly && op.hours[i] && !hasMismatch && "focus:bg-transparent"
             )}
             value={op.hours[i] !== undefined ? op.hours[i] : ''}
             onChange={(e) => handleUpdateHours(op.id, i, e.target.value)}
             placeholder="-"
           />
         </td>
-      ))}
+      )})}
     </tr>
   );
 }
@@ -196,21 +229,82 @@ const ItalianDays = ['D', 'L', 'M', 'M', 'G', 'V', 'S'];
 
 const defaultProjectData = {
   sites: [
-    { id: '1', name: 'csr' },
-    { id: '2', name: 'villa monte 57' },
-    { id: '3', name: 'CANTIERE 3' },
-    { id: '4', name: 'VILLA MARE VILLA VERUCCHIO' },
-    { id: '5', name: 'FONDERIA VILLA VERUCCHIO' },
-    { id: '6', name: 'EX SERGIANI CERASOLO' },
-    { id: '7', name: 'HITECO VILLA VERUCCHIO' }
+    { id: '1', name: 'SCM VILLA MONTE 57 E EX MONDADORI' },
+    { id: '2', name: 'SCM VILLA MARE - VILLA VERUCCHIO' },
+    { id: '3', name: 'SCM VIA EMILIA 77 ASTOLFI' },
+    { id: '4', name: 'SCM VIA EMILIA 71 MARCONI E 59-61' },
+    { id: '5', name: 'SCM STEELMEC - VILLA VERUCCHIO' },
+    { id: '6', name: 'SCM UFFICIO FORNITORI ASTOLFI' },
+    { id: '7', name: 'SCM HITECO - VILLA VERUCCHIO' },
+    { id: '8', name: 'SCM EX SERGIANI - CERASOLO' },
+    { id: '9', name: 'SCM FONDERIA VILLA VERUCCHIO' },
+    { id: '10', name: 'SCM CSR' },
+    { id: '11', name: 'SCM VIA EMILIA 61 MAGAZZINO RICAMBI' }
   ],
   services: [
     { id: '1', name: 'PULIZIE ORDINARIE' },
     { id: '2', name: 'EXTRA' }
   ],
-  siteSettings: {} as Record<string, { canone: string, ord: string, ext: string }>,
+  siteSettings: {} as Record<string, { canone: string, ord: string, ext: string, promptRules?: string }>,
   operatorStore: {
-    '1_1': [{ id: '1', operatorName: 'JAOUIA MALIKA', hours: {} }]
+    '1_1': [
+      { id: '1', operatorName: 'CONSUELO', hours: {}, basePlan: { LUN: 4, MAR: 4.5, MER: 4, GIO: 4.5, VEN: 4 } },
+      { id: '2', operatorName: 'LAVINIA STEFAN', hours: {}, basePlan: { LUN: 3.5, MAR: 3.5, MER: 3.5, GIO: 3.5, VEN: 3.5 } },
+      { id: '3', operatorName: 'SMATI OTHMANE', hours: {}, basePlan: { LUN: 8.5, MAR: 8.5, MER: 8.5, GIO: 8.5, VEN: 8.5 } },
+      { id: '4', operatorName: 'LAVREYNUK VALENTYNA', hours: {}, basePlan: { LUN: 3.5, MAR: 5, MER: 3.5, GIO: 5, VEN: 3.5 } }
+    ],
+    '2_1': [
+      { id: '5', operatorName: 'SEBASTIANI MARIA', hours: {}, basePlan: { LUN: 4.5, MAR: 4, MER: 4.5, GIO: 4, VEN: 4 } },
+      { id: '6', operatorName: 'SEBASTIANI ORNELLA', hours: {}, basePlan: { LUN: 4.5, MAR: 4.5, MER: 4.5, GIO: 4.5, VEN: 3 } },
+      { id: '7', operatorName: 'TRIPODI ADRIANA', hours: {}, basePlan: { LUN: 3, MAR: 3, MER: 3, GIO: 3, VEN: 1 } },
+      { id: '8', operatorName: 'MORENO POLA', hours: {}, basePlan: { LUN: 3, MAR: 3, MER: 3, GIO: 3, VEN: 1 } },
+      { id: '9', operatorName: 'MILOSEVIC GORGANA', hours: {}, basePlan: { LUN: 2.5, MAR: 2.5, MER: 2.5, GIO: 2.5, VEN: 2.5 } },
+      { id: '10', operatorName: 'ANDOLFI ANNA', hours: {}, basePlan: { LUN: 4, MAR: 4, MER: 4, GIO: 4, VEN: 4 } },
+      { id: '11', operatorName: 'TORRICELLI FERDINANDO', hours: {}, basePlan: { LUN: 7, MAR: 7, MER: 8, GIO: 7, VEN: 8 } }
+    ],
+    '3_1': [
+      { id: '12', operatorName: 'ANTONACI ANNARITA', hours: {}, basePlan: { LUN: 6.5, MAR: 6.5, MER: 6.5, GIO: 6.5, VEN: 6.5 } },
+      { id: '13', operatorName: 'EUSEBI STEFANIA', hours: {}, basePlan: { LUN: 5, MAR: 5, MER: 5, GIO: 5, VEN: 5 } },
+      { id: '14', operatorName: 'CENNI ELISA', hours: {}, basePlan: { LUN: 6, MAR: 6, MER: 6, GIO: 6, VEN: 6 } }
+    ],
+    '4_1': [
+      { id: '15', operatorName: 'CENNI ELISA', hours: {}, basePlan: { LUN: 0.5, MAR: 0.5, MER: 0.5, GIO: 0.5, VEN: 0.5 } },
+      { id: '16', operatorName: 'GIURESCU SIMONA', hours: {}, basePlan: { LUN: 2, MAR: 4, MER: 4, GIO: 4, VEN: 2 } },
+      { id: '17', operatorName: 'PORTSCH', hours: {}, basePlan: { LUN: 4, MAR: 4, MER: 4, GIO: 4, VEN: 4 } },
+      { id: '18', operatorName: 'DLAIA ABDELMOULLA', hours: {}, basePlan: { LUN: 7, MAR: 7, MER: 7, GIO: 7, VEN: 7 } },
+      { id: '19', operatorName: 'MOHAMED', hours: {}, basePlan: { LUN: 7, MAR: 7, MER: 7, GIO: 7, VEN: 7 } },
+      { id: '20', operatorName: 'RONCHI DEBORA', hours: {}, basePlan: { LUN: 5.5, MAR: 5.5, MER: 5.5, GIO: 5.5, VEN: 5.5 } },
+      { id: '21', operatorName: 'JAOUIA MALIKA', hours: {}, basePlan: { LUN: 4.5, MAR: 4.5, MER: 4.5, GIO: 4.5, VEN: 4.5 } }
+    ],
+    '5_1': [
+      { id: '22', operatorName: 'KONIUSZKO AGNIESZKA', hours: {}, basePlan: { LUN: 6.5, MAR: 6.75, MER: 6.5, GIO: 7.5, VEN: 3 } },
+      { id: '23', operatorName: 'D\'AMBROSIO MARIA', hours: {}, basePlan: { LUN: 5, MAR: 5, MER: 4, GIO: 6, VEN: 2.5 } },
+      { id: '24', operatorName: 'BUGLI ROBERTA', hours: {}, basePlan: { LUN: 3, MAR: 3, MER: 3, GIO: 3, VEN: 2.75 } },
+      { id: '25', operatorName: 'BRUNI DIANA', hours: {}, basePlan: { LUN: 2.75, MAR: 2.75, MER: 2.75, GIO: 2.75 } },
+      { id: '26', operatorName: 'GIUSTI ROBERTO', hours: {}, basePlan: { LUN: 8, MAR: 8, MER: 8, GIO: 8, VEN: 5 } }
+    ],
+    '6_1': [
+      { id: '27', operatorName: 'D\'AMBROSIO MARIA', hours: {}, basePlan: { LUN: 1.5, MAR: 1.5, MER: 1.5, GIO: 1.5, VEN: 0.5 } }
+    ],
+    '7_1': [
+      { id: '28', operatorName: 'PAZZINI DEBORAH', hours: {}, basePlan: { LUN: 8, MAR: 7.5, MER: 8, GIO: 7.5, VEN: 8 } },
+      { id: '29', operatorName: 'MONTINI NATALINA', hours: {}, basePlan: { LUN: 4.5, MAR: 3, MER: 4.5, GIO: 3, VEN: 4.5 } },
+      { id: '30', operatorName: 'SEGNANE SOULEYMANE', hours: {}, basePlan: { LUN: 8, MAR: 7.5, MER: 8, GIO: 7.5, VEN: 8 } }
+    ],
+    '8_1': [
+      { id: '31', operatorName: 'MILA MALASPINA', hours: {}, basePlan: { LUN: 2.5, MAR: 2.5, MER: 2.5, GIO: 2.5, VEN: 2.5 } },
+      { id: '32', operatorName: 'SMATI OTHMANE', hours: {}, basePlan: { MAR: 3, GIO: 3 } }
+    ],
+    '9_1': [
+      { id: '33', operatorName: 'LOSORBO LAURA', hours: {}, basePlan: { LUN: 2.5, MAR: 4, MER: 2.5, GIO: 4, VEN: 2.5 } },
+      { id: '34', operatorName: 'DRISS', hours: {}, basePlan: { LUN: 8, MAR: 8, MER: 8, GIO: 8, VEN: 8 } }
+    ],
+    '10_1': [
+      { id: '35', operatorName: 'JAOUIA MALIKA', hours: {}, basePlan: { LUN: 1, MER: 1, VEN: 1 } }
+    ],
+    '11_1': [
+      { id: '36', operatorName: 'ABDEL', hours: {} }
+    ]
   } as Record<string, OperatorRecord[]>,
   rentalStore: {} as Record<string, {id: string, description: string, amount: string}[]>,
   deratStore: {} as Record<string, {id: string, description: string, amount: string}[]>
@@ -238,6 +332,21 @@ const fetchStoredDataForMonthYear = async (projectId: string, year: number, mont
         d.deratStore = {};
         if (d.sites?.length > 0) d.deratStore[d.sites[0].id] = d.deratizations;
     }
+
+    // Patch missing basePlan from defaultProjectData
+    if (d.operatorStore) {
+      Object.keys(d.operatorStore).forEach(key => {
+        const defaultOps = defaultProjectData.operatorStore[key] || [];
+        d.operatorStore[key] = d.operatorStore[key].map((op: any) => {
+          const defOp = defaultOps.find((def: any) => def.operatorName.trim().toUpperCase() === op.operatorName.trim().toUpperCase());
+          if (defOp && defOp.basePlan && !op.basePlan) {
+            return { ...op, basePlan: defOp.basePlan };
+          }
+          return op;
+        });
+      });
+    }
+
     return d;
   }
 
@@ -272,6 +381,20 @@ const fetchStoredDataForMonthYear = async (projectId: string, year: number, mont
       Object.keys(migratedDeratStore).forEach(siteId => {
          newDeratStore[siteId] = migratedDeratStore[siteId].map((item: any) => ({ ...item, id: Date.now() + Math.random().toString() }));
       });
+
+      // Patch missing basePlan from defaultProjectData
+      if (newOperatorStore) {
+        Object.keys(newOperatorStore).forEach(key => {
+          const defaultOps = defaultProjectData.operatorStore[key] || [];
+          newOperatorStore[key] = newOperatorStore[key].map((op: any) => {
+            const defOp = defaultOps.find((def: any) => def.operatorName.trim().toUpperCase() === op.operatorName.trim().toUpperCase());
+            if (defOp && defOp.basePlan && !op.basePlan) {
+              return { ...op, basePlan: defOp.basePlan };
+            }
+            return op;
+          });
+        });
+      }
 
       return {
         sites: prevData.sites || defaultProjectData.sites,
@@ -366,6 +489,15 @@ const parseDeterministicCSV = (csvText: string) => {
             currentCantiere = gruppoVal.replace(/->\s*Servizio:\s*/i, '').trim();
             currentServizio = "PULIZIE ORDINARIE";
         }
+        
+        let servUpper = currentServizio.toUpperCase();
+        if (servUpper === 'PULIZIE' || servUpper.includes('PULIZIA') || servUpper === 'ORDINARIE' || servUpper === 'PULIZIE ORDINARIE' || servUpper === 'PAGHE') {
+           currentServizio = 'PULIZIE ORDINARIE';
+        } else if (servUpper.includes('EXTRA') || servUpper === 'STRAORDINARI') {
+           currentServizio = 'EXTRA';
+        } else {
+           currentServizio = 'PULIZIE ORDINARIE';
+        }
      }
      
      const rawLavoratore = row[colLavoratore]?.replace(/['"]/g, '').trim();
@@ -443,7 +575,6 @@ export default function ProjectDetails() {
 
   // Determine permissions
   const [isReadOnly, setIsReadOnly] = useState(false);
-  const isPastMonth = activeYear < currentYear || (activeYear === currentYear && monthIndex < currentMonthIdx);
 
   const [projectName, setProjectName] = useState('SCM');
   useEffect(() => {
@@ -600,9 +731,9 @@ export default function ProjectDetails() {
     }
   }, [id, activeYear, monthIndex, isDirty]);
 
-  // Periodic Auto-save every 3 seconds
+  // Periodic Auto-save every 10 seconds
   useEffect(() => {
-    const interval = setInterval(saveState, 3000);
+    const interval = setInterval(saveState, 10000);
 
     // Save on unmount or tab close
     const handleBeforeUnload = () => {
@@ -628,6 +759,9 @@ export default function ProjectDetails() {
   const [activeSiteId, setActiveSiteId] = useState('1');
   const [editingSiteId, setEditingSiteId] = useState<string | null>(null);
   const [editingSiteName, setEditingSiteName] = useState('');
+  
+  const [editingMainSiteId, setEditingMainSiteId] = useState<string | null>(null);
+  const [editingMainSiteName, setEditingMainSiteName] = useState('');
 
   const rentals = projectData.rentalStore?.[activeSiteId] || (projectData.rentals && sites.length > 0 && activeSiteId === sites[0].id ? projectData.rentals : []);
   const deratizations = projectData.deratStore?.[activeSiteId] || (projectData.deratizations && sites.length > 0 && activeSiteId === sites[0].id ? projectData.deratizations : []);
@@ -654,8 +788,8 @@ export default function ProjectDetails() {
 
   const activeServiceName = services.find((s: any) => s.id === activeServiceId)?.name || '';
 
-  const currentSettings = siteSettings[activeSiteId] || { canone: "200", ord: "18.25", ext: "18.25" };
-  const updateSettings = (key: 'canone' | 'ord' | 'ext', val: string) => {
+  const currentSettings = siteSettings[activeSiteId] || { canone: "200", ord: "18.25", ext: "18.25", promptRules: "" };
+  const updateSettings = (key: 'canone' | 'ord' | 'ext' | 'promptRules', val: string) => {
     setSiteSettings(prev => ({
       ...prev,
       [activeSiteId]: { ...currentSettings, [key]: val }
@@ -666,6 +800,295 @@ export default function ProjectDetails() {
   // Get number of days in month
   const daysInMonth = new Date(activeYear, monthIndex + 1, 0).getDate();
   
+  const [isConfirmFillPlanOpen, setIsConfirmFillPlanOpen] = useState(false);
+  const [isConfirmClearSiteOpen, setIsConfirmClearSiteOpen] = useState(false);
+
+  const handleClearSite = () => {
+    setIsConfirmClearSiteOpen(true);
+  };
+
+  const confirmClearSite = () => {
+    if (isReadOnly) return;
+    setIsConfirmClearSiteOpen(false);
+    
+    const newStore = { ...operatorStore };
+    services.forEach((service: any) => {
+        const storeKey = `${activeSiteId}_${service.id}`;
+        if (newStore[storeKey]) {
+            newStore[storeKey] = newStore[storeKey].map((op: any) => ({ ...op, hours: {} }));
+        }
+    });
+    setOperatorStore(newStore);
+  };
+
+  const handleAutoFillBasePlan = () => {
+    setIsConfirmFillPlanOpen(true);
+  };
+
+  const confirmAutoFillBasePlan = () => {
+    if (isReadOnly) return;
+    setIsConfirmFillPlanOpen(false);
+    
+    let updatedCount = 0;
+    const newOps = operators.map(op => {
+      let bp = op.basePlan;
+      if (!bp) {
+         // Try to find the operator by name in the default project data for the CURRENT SITE first
+         const currentSiteDef = defaultProjectData.sites.find(s => s.name.trim().toUpperCase() === activeSiteName.trim().toUpperCase());
+         let found = false;
+         if (currentSiteDef) {
+             const defOpsForSite = defaultProjectData.operatorStore[`${currentSiteDef.id}_1`] || [];
+             const defOpForSite = defOpsForSite.find(d => d.operatorName.trim().toUpperCase() === op.operatorName.trim().toUpperCase());
+             if (defOpForSite && defOpForSite.basePlan) {
+                 bp = defOpForSite.basePlan;
+                 found = true;
+             }
+         }
+         
+         // If not found in current site, fallback to any site
+         if (!found) {
+             for (const key of Object.keys(defaultProjectData.operatorStore)) {
+                const defOps = defaultProjectData.operatorStore[key] || [];
+                const defOp = defOps.find(d => d.operatorName.trim().toUpperCase() === op.operatorName.trim().toUpperCase());
+                if (defOp && defOp.basePlan) {
+                    bp = defOp.basePlan;
+                    break;
+                }
+             }
+         }
+      }
+
+      if (!bp) return op;
+      
+      updatedCount++;
+      const newHours = { ...op.hours };
+      for (let i = 1; i <= daysInMonth; i++) {
+        const dayOfWeek = new Date(activeYear, monthIndex, i).getDay(); // 0 is Sunday, 1 is Monday...
+        if (dayOfWeek === 1 && bp.LUN !== undefined && bp.LUN !== "") newHours[i - 1] = String(bp.LUN);
+        if (dayOfWeek === 2 && bp.MAR !== undefined && bp.MAR !== "") newHours[i - 1] = String(bp.MAR);
+        if (dayOfWeek === 3 && bp.MER !== undefined && bp.MER !== "") newHours[i - 1] = String(bp.MER);
+        if (dayOfWeek === 4 && bp.GIO !== undefined && bp.GIO !== "") newHours[i - 1] = String(bp.GIO);
+        if (dayOfWeek === 5 && bp.VEN !== undefined && bp.VEN !== "") newHours[i - 1] = String(bp.VEN);
+        if (dayOfWeek === 6 && bp.SAB !== undefined && bp.SAB !== "") newHours[i - 1] = String(bp.SAB);
+        if (dayOfWeek === 0 && bp.DOM !== undefined && bp.DOM !== "") newHours[i - 1] = String(bp.DOM);
+      }
+      return { ...op, hours: newHours, basePlan: bp };
+    });
+    
+    if (updatedCount > 0) {
+      setOperators(newOps);
+      // Optional: alert(`Piano compilato per ${updatedCount} operatori.`);
+    } else {
+      alert("Nessun piano base trovato per gli operatori di questo cantiere. Il piano base deve essere impostato per poter essere compilato.");
+    }
+  };
+
+  const handleGenerateWithAI = async () => {
+    if (isReadOnly) return;
+    
+    // Check if openrouter key exists
+    let openRouterModel = localStorage.getItem('openRouterModel') || 'internal_gemini';
+    if (openRouterModel === 'google/gemini-2.0-flash-lite-preview-02-05:free') {
+        openRouterModel = 'internal_gemini';
+    }
+    const finalApiKey = localStorage.getItem('customGeminiApiKey');
+    if (openRouterModel !== 'internal_gemini' && (!finalApiKey || !finalApiKey.startsWith('sk-or-v1'))) {
+        alert("API Key OpenRouter non trovata o non valida (deve iniziare con sk-or-v1). Configurala in Impostazioni oppure scegli Google Gemini Integrato.");
+        return;
+    }
+
+    setIsGeneratingAI(true);
+    setGeneratingAIStatus('Elaborazione turni con AI...');
+
+    try {
+        const rules = currentSettings.promptRules;
+        const currentOps = operators.map(op => ({
+            id: op.id,
+            nome: op.operatorName,
+            basePlan: op.basePlan || {}
+        }));
+
+        let systemPrompt = `Sei un pianificatore di turni di lavorazione mensili.
+Devi generare il piano ore per il cantiere "${activeSiteName}" per il mese di ${monthIndex + 1}/${activeYear}.
+Mese composto da ${daysInMonth} giorni.
+Restituisci l'output in formato JSON contenente un array "entries" con lo schema:
+{ "entries": [ { "operatoreId": "string", "giorno": numero_da_1_a_${daysInMonth}, "ore": "stringa decimale (es. '4.5')" } ] }.
+Assicurati che "operatoreId" coincida esattamente con l'ID fornito nel prompt dell'utente.
+Non includere markdown, restituisci solo JSON puro.
+`;
+
+        if (rules && rules.trim()) {
+            systemPrompt += `\n\nREGOLE SPECIFICHE DA RISPETTARE STRICTLY:\n${rules}\nQueste regole hanno la precedenza assoluta sui piani base stabiliti e devono essere rispettate alla lettera.`;
+        }
+
+        const daysMapping = [];
+        for (let i = 1; i <= daysInMonth; i++) {
+            const d = new Date(activeYear, monthIndex, i);
+            const weekday = ['Domenica','Lunedì','Martedì','Mercoledì','Giovedì','Venerdì','Sabato'][d.getDay()];
+            daysMapping.push(`${i}: ${weekday}`);
+        }
+
+        const basePlanEntries: any[] = [];
+        currentOps.forEach(op => {
+           let bp = op.basePlan;
+           // Fallback to default project data if basePlan is missing
+           if (!bp || Object.keys(bp).length === 0) {
+                 const currentSiteDef = defaultProjectData.sites.find((s: any) => s.name.trim().toUpperCase() === activeSiteName.trim().toUpperCase());
+                 let found = false;
+                 if (currentSiteDef) {
+                     const defOpsForSite = defaultProjectData.operatorStore[`${currentSiteDef.id}_1`] || [];
+                     const defOpForSite = defOpsForSite.find((d: any) => d.operatorName.trim().toUpperCase() === op.nome.trim().toUpperCase());
+                     if (defOpForSite && defOpForSite.basePlan) { bp = defOpForSite.basePlan; found = true; }
+                 }
+                 if (!found) {
+                     for (const key of Object.keys(defaultProjectData.operatorStore)) {
+                        const defOps = defaultProjectData.operatorStore[key] || [];
+                        const defOp = defOps.find((d: any) => d.operatorName.trim().toUpperCase() === op.nome.trim().toUpperCase());
+                        if (defOp && defOp.basePlan) { bp = defOp.basePlan; break; }
+                     }
+                 }
+           }
+           if (bp) {
+               for (let i = 1; i <= daysInMonth; i++) {
+                 const dayOfWeek = new Date(activeYear, monthIndex, i).getDay();
+                 if (dayOfWeek === 1 && bp.LUN !== undefined && bp.LUN !== "") basePlanEntries.push({ operatoreId: op.id, giorno: i, ore: String(bp.LUN) });
+                 if (dayOfWeek === 2 && bp.MAR !== undefined && bp.MAR !== "") basePlanEntries.push({ operatoreId: op.id, giorno: i, ore: String(bp.MAR) });
+                 if (dayOfWeek === 3 && bp.MER !== undefined && bp.MER !== "") basePlanEntries.push({ operatoreId: op.id, giorno: i, ore: String(bp.MER) });
+                 if (dayOfWeek === 4 && bp.GIO !== undefined && bp.GIO !== "") basePlanEntries.push({ operatoreId: op.id, giorno: i, ore: String(bp.GIO) });
+                 if (dayOfWeek === 5 && bp.VEN !== undefined && bp.VEN !== "") basePlanEntries.push({ operatoreId: op.id, giorno: i, ore: String(bp.VEN) });
+                 if (dayOfWeek === 6 && bp.SAB !== undefined && bp.SAB !== "") basePlanEntries.push({ operatoreId: op.id, giorno: i, ore: String(bp.SAB) });
+                 if (dayOfWeek === 0 && bp.DOM !== undefined && bp.DOM !== "") basePlanEntries.push({ operatoreId: op.id, giorno: i, ore: String(bp.DOM) });
+               }
+           }
+        });
+
+        const userPrompt = `Gli operatori attivi nel cantiere sono:\n` +
+           JSON.stringify(currentOps.map(op => ({ id: op.id, nome: op.nome })), null, 2) + 
+           `\n\nMAPPATURA DEI GIORNI DEL MESE:\n` + daysMapping.join(', ') + 
+           `\n\nPIANO BASE PRE-COMPILATO TASSATIVO (GIA' POSIZIONATO SUI GIORNI CORRETTI):\n` +
+           JSON.stringify({ entries: basePlanEntries }) +
+           `\n\nATTENZIONE - REGOLE DI GENERAZIONE:
+1. Ti ho fornito un PIANO BASE PRE-COMPILATO sotto forma di JSON ("entries").
+2. Devi ORA applicare le REGOLE SPECIFICHE (se fornite nel prompt di sistema) per AGGIUNGERE, MODIFICARE o RIMUOVERE ore a questo piano di base.
+3. Se non ci sono REGOLE SPECIFICHE che alterino il piano, o per gli operatori non citati nelle regole, RESTITUISCI esattamente le stesse entries che ti ho fornito nel piano base!
+4. NON scombinare i giorni: se l'operatore A lavora nei giorni 1, 3, 5 nel piano base e non ci sono regole che lo modificano, genera in output i giorni 1, 3, 5 così come sono.
+5. Usa il formato {"entries": [...]}`;
+
+        const fallbackModels = openRouterModel === 'internal_gemini' 
+            ? ['internal_gemini'] 
+            : [openRouterModel, 'meta-llama/llama-3.3-70b-instruct:free', 'mistralai/mistral-nemo:free', 'google/gemma-2-9b-it:free', 'nousresearch/hermes-3-llama-3.1-405b:free'];
+        const uniqueModels = [...new Set(fallbackModels)];
+        
+        let finalResponseStr = null;
+        let lastError = null;
+
+        for (const model of uniqueModels) {
+            try {
+                setGeneratingAIStatus(`Contatto AI (${model === 'internal_gemini' ? 'Gemini Integrato' : (model.split('/')[1] || model)})...`);
+                
+                let response;
+                if (model === 'internal_gemini') {
+                     response = await fetch("/api/gemini", {
+                         method: "POST",
+                         headers: { "Content-Type": "application/json" },
+                         body: JSON.stringify({
+                             systemInstruction: systemPrompt,
+                             contents: userPrompt,
+                             model: "gemini-2.5-flash"
+                         })
+                     });
+                     if (!response.ok) {
+                         const errStr = await response.text();
+                         let errObj;
+                         try { errObj = JSON.parse(errStr); } catch (e) {}
+                         throw new Error(errObj?.error || errStr || "Errore Google Gemini Integrato");
+                     }
+                     const responseData = await response.json();
+                     finalResponseStr = responseData.text || "";
+                } else {
+                    response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+                        method: "POST",
+                        headers: {
+                            "Authorization": `Bearer ${finalApiKey}`,
+                            "Content-Type": "application/json",
+                            "HTTP-Referer": window.location.origin,
+                            "X-Title": "SCM Gestione Presenze"
+                        },
+                        body: JSON.stringify({
+                            model: model, 
+                            messages: [
+                                { role: "system", content: systemPrompt },
+                                { role: "user", content: userPrompt }
+                            ]
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const errStr = await response.text();
+                        let errObj;
+                        try { errObj = JSON.parse(errStr); } catch (e) {}
+                        const msg = errObj?.error?.message || errObj?.message || errStr || "Provider error";
+                        throw new Error(msg);
+                    }
+
+                    const responseData = await response.json();
+                    finalResponseStr = responseData.choices[0].message.content.trim() || "";
+                }
+                break; // Usciamo dal loop se ha successo
+            } catch (e: any) {
+                lastError = e;
+                console.warn(`Errore con il modello ${model}:`, e.message);
+                // Proviamo il prossimo modello
+            }
+        }
+
+        if (!finalResponseStr) {
+            throw new Error(`Tutti i modelli AI hanno fallito. Ultimo errore: ${lastError?.message}`);
+        }
+
+        let jsonStr = finalResponseStr;
+        
+        // Estrazione robusta del JSON dal markdown o testo
+        const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+            jsonStr = jsonMatch[0];
+        }
+        
+        // Remove trailing markdown codeblock just in case
+        if (jsonStr.endsWith('\`\`\`')) {
+            jsonStr = jsonStr.replace(/\`\`\`$/, '').trim();
+        }
+
+        const data = JSON.parse(jsonStr);
+        
+        if (data && data.entries && Array.isArray(data.entries)) {
+            const newOps = operators.map(op => ({ ...op, hours: { ...op.hours } }));
+            
+            // svuotare il mese
+            newOps.forEach(op => {
+               op.hours = {};
+            });
+
+            data.entries.forEach((entry: any) => {
+                const op = newOps.find(o => o.id === entry.operatoreId || String(o.operatorName).toLowerCase() === String(entry.operatoreId).toLowerCase());
+                if (op && entry.giorno >= 1 && entry.giorno <= daysInMonth) {
+                    op.hours[entry.giorno - 1] = String(entry.ore);
+                }
+            });
+
+            setOperators(newOps);
+            setGeneratingAIStatus('Completato con successo!');
+        } else {
+            throw new Error("Il JSON restituito non ha il formato atteso.");
+        }
+    } catch (e: any) {
+        alert("Errore AI: " + e.message);
+        setIsGeneratingAI(false);
+    } finally {
+        setTimeout(() => setIsGeneratingAI(false), 1500);
+    }
+  };
+
   // Array of days of the week for the table header
   const daysOfWeek = Array.from({ length: daysInMonth }).map((_, i) => {
     const date = new Date(activeYear, monthIndex, i + 1);
@@ -687,6 +1110,8 @@ export default function ProjectDetails() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newOperatorName, setNewOperatorName] = useState('');
+  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+  const [generatingAIStatus, setGeneratingAIStatus] = useState('');
 
   const handleAddOperator = (e: React.FormEvent) => {
     e.preventDefault();
@@ -705,6 +1130,11 @@ export default function ProjectDetails() {
     setOperators(operators.filter(op => op.id !== id));
   };
 
+  const handleUpdateOperatorName = (id: string, name: string) => {
+    if (isReadOnly) return;
+    setOperators(operators.map(op => op.id === id ? { ...op, operatorName: name } : op));
+  };
+
   const handleUpdateHours = (operatorId: string, dayIndex: number, value: string) => {
     if (isReadOnly) return;
     // Allow empty string or valid numbers (including decimals)
@@ -719,6 +1149,25 @@ export default function ProjectDetails() {
           newHours[dayIndex] = value;
         }
         return { ...op, hours: newHours };
+      }
+      return op;
+    }));
+  };
+
+  const handleUpdateBasePlan = (operatorId: string, day: keyof NonNullable<OperatorRecord['basePlan']>, value: string) => {
+    if (isReadOnly) return;
+    if (value !== '' && !/^\d*\.?\d*$/.test(value)) return;
+    
+    setOperators(operators.map(op => {
+      if (op.id === operatorId) {
+        const currentBasePlan = op.basePlan || {};
+        const newBasePlan = { ...currentBasePlan } as any;
+        if (value === '') {
+            delete newBasePlan[day];
+        } else {
+            newBasePlan[day] = parseFloat(value);
+        }
+        return { ...op, basePlan: newBasePlan };
       }
       return op;
     }));
@@ -753,6 +1202,19 @@ export default function ProjectDetails() {
       setSites((prev: any) => prev.map((s: any) => s.id === editingSiteId ? { ...s, name: editingSiteName.trim() } : s));
     }
     setEditingSiteId(null);
+  };
+
+  const handleStartEditMainSite = (site: { id: string, name: string }) => {
+    if (!site) return;
+    setEditingMainSiteId(site.id);
+    setEditingMainSiteName(site.name);
+  };
+
+  const handleSaveMainSiteEdit = () => {
+    if (editingMainSiteName.trim()) {
+      setSites((prev: any) => prev.map((s: any) => s.id === editingMainSiteId ? { ...s, name: editingMainSiteName.trim() } : s));
+    }
+    setEditingMainSiteId(null);
   };
 
   const [modalConfig, setModalConfig] = useState<{isOpen: boolean, type: 'rental' | 'deratization' | null}>({isOpen: false, type: null});
@@ -1022,12 +1484,18 @@ export default function ProjectDetails() {
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
         fileContent = xlsx.utils.sheet_to_csv(firstSheet);
       } else if (file.name.endsWith('.pdf')) {
-          setImportStatus('Lettura PDF in corso...');
-          // Reads file to base64
+          setImportStatus('Estrazione testo dal PDF in corso...');
           const buffer = await file.arrayBuffer();
-          const base64 = btoa(new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), ''));
-          fileContent = base64;
-          mimeType = 'application/pdf';
+          const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+          let extractedText = '';
+          for (let i = 1; i <= pdf.numPages; i++) {
+             const page = await pdf.getPage(i);
+             const content = await page.getTextContent();
+             const strings = content.items.map((item: any) => item.str);
+             extractedText += strings.join(' ') + '\n';
+          }
+          fileContent = extractedText;
+          mimeType = 'text/plain';
       } else {
         throw new Error("Formato non supportato. Usa CSV, PDF, XLS, o XLSX.");
       }
@@ -1044,67 +1512,118 @@ export default function ProjectDetails() {
 
       if (!data) {
         setImportStatus('Elaborazione intelligente AI...');
-        const fallbackKey = typeof process !== 'undefined' && process.env ? process.env.GEMINI_API_KEY : undefined;
         const customKey = localStorage.getItem('customGeminiApiKey');
-        const finalApiKey = customKey || fallbackKey;
-        
-        if (!finalApiKey) {
-          throw new Error("API Key Gemini non trovata. Per favore inseriscila nella pagina Impostazioni o utilizza un file con formato standard Zucchetti.");
+        const finalApiKey = customKey; // the openrouter key
+        let openRouterModel = localStorage.getItem('openRouterModel') || 'meta-llama/llama-3.3-70b-instruct:free';
+        if (openRouterModel === 'google/gemini-2.0-flash-lite-preview-02-05:free') {
+            openRouterModel = 'meta-llama/llama-3.3-70b-instruct:free';
         }
         
-        const ai = new GoogleGenAI({ apiKey: finalApiKey });
-        // Build exactly the contents parts based on Mimetype
-        const parts = [];
-        if (mimeType === 'application/pdf') {
-            parts.push({ inlineData: { data: fileContent, mimeType: 'application/pdf' } });
-        } else {
-            parts.push({ text: `Dati raw da file importato:\n\n${fileContent}` });
+        if (!finalApiKey || !finalApiKey.startsWith('sk-or-v1')) {
+          throw new Error("API Key OpenRouter non trovata o non valida (deve iniziare con sk-or-v1). Per favore configurarla in Impostazioni.");
         }
 
-        parts.push({
-          text: `Questo è un registro presenze/ore dei lavoratori. 
+        let systemPrompt = `Sei un estrattore Dati da registro presenze.
 Individua i lavoratori, in che cantiere lavorano, per quale servizio (se non specificato mettili nel servizio "PULIZIE ORDINARIE"), e le loro ore giorno per giorno per il mese corrente.
-Ritorna i dati in JSON. Il giorno è un numero da 1 a 31. Le ore sono in formato decimale.
+Ritorna i dati in puro JSON (senza markdown blocks come \`\`\`json). Il giorno è un numero da 1 a 31. Le ore sono in formato decimale stringa (es. "4.5").
 Attenzione, se ci sono lettere al posto delle ore (come 'm' per malattia o 'f' per ferie, riportali testualmente o ignora se non pertinenti al registro ore).
-
 Esempio di output desiderato:
 {
   "entries": [
     { "cantiere": "Alpha Srl", "servizio": "PULIZIE ORDINARIE", "operatore": "Mario Rossi", "giorno": 1, "ore": "4.5" }
   ]
-}`
-        });
+}`;
 
-        const response = await ai.models.generateContent({
-          model: "gemini-3.1-pro-preview",
-          contents: { parts: parts },
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                entries: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      cantiere: { type: Type.STRING },
-                      servizio: { type: Type.STRING },
-                      operatore: { type: Type.STRING },
-                      giorno: { type: Type.INTEGER },
-                      ore: { type: Type.STRING }
-                    },
-                    required: ["cantiere", "servizio", "operatore", "giorno", "ore"]
-                  }
-                }
-              },
-              required: ["entries"]
+        const siteRules = sites.map((s: any) => {
+            const rules = siteSettings[s.id]?.promptRules;
+            if (rules && rules.trim().length > 0) {
+                return `- Cantiere "${s.name}": ${rules}`;
             }
-          }
-        });
+            return null;
+        }).filter(Boolean).join('\n');
 
-        const jsonStr = response.text?.trim() || "";
-        data = JSON.parse(jsonStr);
+        if (siteRules.length > 0) {
+            systemPrompt += `\n\nREGOLE SPECIFICHE DA RISPETTARE PER I CANTIERE:\n${siteRules}\nTieni in forte considerazione queste regole quando assegni le ore o estrai i nomi per questi cantieri.`;
+        }
+
+        const fallbackModels = openRouterModel === 'internal_gemini' 
+            ? ['internal_gemini'] 
+            : [openRouterModel, 'meta-llama/llama-3.3-70b-instruct:free', 'mistralai/mistral-nemo:free', 'google/gemma-2-9b-it:free', 'nousresearch/hermes-3-llama-3.1-405b:free'];
+        const uniqueModels = [...new Set(fallbackModels)];
+        
+        let finalResponseStr = null;
+        let lastError = null;
+
+        for (const model of uniqueModels) {
+            try {
+                setImportStatus(`Elaborazione intelligente AI (${model === 'internal_gemini' ? 'Gemini Integrato' : (model.split('/')[1] || model)})...`);
+                
+                let response;
+                if (model === 'internal_gemini') {
+                    response = await fetch("/api/gemini", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            systemInstruction: systemPrompt,
+                            contents: `Dati raw da file importato:\n\n${fileContent}`,
+                            model: "gemini-2.5-flash"
+                        })
+                    });
+                    if (!response.ok) {
+                        const errStr = await response.text();
+                        let errObj;
+                        try { errObj = JSON.parse(errStr); } catch (e) {}
+                        throw new Error(errObj?.error || errStr || "Errore Google Gemini Integrato");
+                    }
+                    const responseData = await response.json();
+                    finalResponseStr = responseData.text || "";
+                } else {
+                    response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+                        method: "POST",
+                        headers: {
+                            "Authorization": `Bearer ${finalApiKey}`,
+                            "Content-Type": "application/json",
+                            "HTTP-Referer": window.location.origin,
+                            "X-Title": "SCM Gestione Presenze"
+                        },
+                        body: JSON.stringify({
+                            model: model, 
+                            messages: [
+                                { role: "system", content: systemPrompt },
+                                { role: "user", content: `Dati raw da file importato:\n\n${fileContent}` }
+                            ]
+                        })
+                    });
+
+                    if (!response.ok) {
+                       const errStr = await response.text();
+                       let errObj;
+                       try { errObj = JSON.parse(errStr); } catch (e) {}
+                       const msg = errObj?.error?.message || errObj?.message || errStr || "Provider error";
+                       throw new Error(msg);
+                    }
+                    const responseData = await response.json();
+                    finalResponseStr = responseData.choices[0].message.content.trim() || "";
+                }
+                break;
+            } catch (e: any) {
+                lastError = e;
+                console.warn(`Errore con il modello ${model}:`, e.message);
+            }
+        }
+
+        if (!finalResponseStr) {
+            throw new Error(`Tutti i modelli AI hanno fallito. Ultimo errore: ${lastError?.message}`);
+        }
+
+        let jsonStr = finalResponseStr;
+        
+        // Remove markdown wrappers if any
+        if (jsonStr.startsWith('```json')) jsonStr = jsonStr.replace(/^```json/, '');
+        if (jsonStr.startsWith('```')) jsonStr = jsonStr.replace(/^```/, '');
+        if (jsonStr.endsWith('```')) jsonStr = jsonStr.replace(/```$/, '');
+        
+        data = JSON.parse(jsonStr.trim());
       }
       
       setImportStatus('Sincronizzazione dati in corso...');
@@ -1112,7 +1631,10 @@ Esempio di output desiderato:
       if (data.entries && Array.isArray(data.entries)) {
         // Build new state dynamically
         let currentSites = [...sites];
-        let currentServices = [...services];
+        let currentServices = [
+          { id: '1', name: 'PULIZIE ORDINARIE' },
+          { id: '2', name: 'EXTRA' }
+        ];
         let currentOperatorStore = { ...operatorStore };
 
         data.entries.forEach((entry: any) => {
@@ -1123,10 +1645,18 @@ Esempio di output desiderato:
                 currentSites.push(sSite);
             }
             // Find or create service
-            let sService = currentServices.find(s => s.name.toLowerCase() === entry.servizio.toLowerCase());
+            let servName = entry.servizio.toUpperCase();
+            if (servName === 'PULIZIE' || servName.includes('ORDINARI') || servName.includes('PAGHE') || servName === 'PULIZIA') {
+                servName = 'PULIZIE ORDINARIE';
+            } else if (servName.includes('EXTRA') || servName.includes('STRAORDINARI')) {
+                servName = 'EXTRA';
+            } else {
+                servName = 'PULIZIE ORDINARIE';
+            }
+
+            let sService = currentServices.find(s => s.name === servName);
             if (!sService) {
-                sService = { id: 'import_' + Date.now() + Math.random(), name: entry.servizio.toUpperCase() };
-                currentServices.push(sService);
+                sService = currentServices[0];
             }
 
             const storeKey = `${sSite.id}_${sService.id}`;
@@ -1167,8 +1697,63 @@ Esempio di output desiderato:
     }
   };
 
+  const discrepancies = useMemo(() => {
+    const issues: { siteName: string, serviceName: string, days: number[] }[] = [];
+    
+    sites.forEach((site: any) => {
+      services.forEach((service: any) => {
+        const storeKey = `${site.id}_${service.id}`;
+        const ops = operatorStore[storeKey] || [];
+        
+        const mismatchedDays: number[] = [];
+        
+        for (let i = 0; i < daysInMonth; i++) {
+          const wday = new Date(activeYear, monthIndex, i + 1).getDay();
+          const dayKey = wday === 0 ? 'DOM' : wday === 1 ? 'LUN' : wday === 2 ? 'MAR' : wday === 3 ? 'MER' : wday === 4 ? 'GIO' : wday === 5 ? 'VEN' : 'SAB';
+          
+          let dayMismatch = false;
+          ops.forEach((op: any) => {
+             const val = parseFloat(String(op.hours[i] || '0').replace(',', '.'));
+             const parsedVal = isNaN(val) ? 0 : val;
+             
+             const planVal = parseFloat(String(op.basePlan?.[dayKey] || '0').replace(',', '.'));
+             const parsedPlanVal = isNaN(planVal) ? 0 : planVal;
+
+             if (parsedVal > 0 && parsedVal !== parsedPlanVal) {
+                dayMismatch = true;
+             }
+          });
+          
+          if (dayMismatch) {
+             mismatchedDays.push(i + 1);
+          }
+        }
+        
+        if (mismatchedDays.length > 0) {
+           issues.push({ siteName: site.name, serviceName: service.name, days: mismatchedDays });
+        }
+      });
+    });
+    return issues;
+  }, [sites, services, operatorStore, activeYear, monthIndex, daysInMonth]);
+
   return (
     <div className="min-h-screen bg-bg-main font-sans text-text-main">
+      {discrepancies.length > 0 && (
+        <div className="bg-yellow-50 border-b border-yellow-200 px-6 py-3 text-sm text-yellow-800 print:hidden flex flex-col gap-1">
+          <div className="font-bold flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-yellow-600" />
+            <span>Discrepanze rilevate rispetto al piano base nel mese corrente:</span>
+          </div>
+          <ul className="list-disc pl-8 mt-1 space-y-0.5">
+            {discrepancies.map((d, index) => (
+              <li key={index} className="text-yellow-700">
+                <span className="font-semibold">{d.siteName}</span> ({d.serviceName}): giorni {d.days.join(', ')}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {/* Top Navigation Bar */}
       <div className="sticky top-0 z-10 border-b border-border-soft bg-card-bg px-6 py-4 print:hidden">
         <div className="flex items-center justify-between">
@@ -1344,6 +1929,52 @@ Esempio di output desiderato:
                         })}
                       </tr>
                     ))}
+                    {ops.length > 0 && (
+                      <tr className="bg-gray-100 hidden">
+                        <td className="border border-black p-1 text-right font-bold uppercase text-[10px]">Totale</td>
+                        {Array.from({ length: daysInMonth }).map((_, i) => {
+                          const wday = new Date(activeYear, monthIndex, i + 1).getDay();
+                          const dayKey = wday === 0 ? 'DOM' : wday === 1 ? 'LUN' : wday === 2 ? 'MAR' : wday === 3 ? 'MER' : wday === 4 ? 'GIO' : wday === 5 ? 'VEN' : 'SAB';
+
+                          const dayTotal = ops.reduce((sum: number, op: any) => {
+                            const val = parseFloat(String(op.hours[i] || '0').replace(',', '.'));
+                            return sum + (isNaN(val) ? 0 : val);
+                          }, 0);
+                          
+                          const planTotal = ops.reduce((sum: number, op: any) => {
+                            const val = parseFloat(String(op.basePlan?.[dayKey] || '0').replace(',', '.'));
+                            return sum + (isNaN(val) ? 0 : val);
+                          }, 0);
+
+                          const hasMismatch = dayTotal !== planTotal && (dayTotal > 0 || planTotal > 0);
+
+                          return (
+                            <td key={i} className={cn("border border-black p-1 text-center font-bold text-[10px]", isWeekend(i) && "text-gray-500", hasMismatch && "bg-red-100 text-red-600 print:bg-red-100")}>
+                               {dayTotal > 0 ? dayTotal : ''}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    )}
+                    {ops.length > 0 && (
+                      <tr className="bg-gray-50 text-gray-500 hidden">
+                        <td className="border border-black p-1 text-right font-bold uppercase text-[10px]">Tot. Pianificato</td>
+                        {Array.from({ length: daysInMonth }).map((_, i) => {
+                          const wday = new Date(activeYear, monthIndex, i + 1).getDay();
+                          const dayKey = wday === 0 ? 'DOM' : wday === 1 ? 'LUN' : wday === 2 ? 'MAR' : wday === 3 ? 'MER' : wday === 4 ? 'GIO' : wday === 5 ? 'VEN' : 'SAB';
+                          
+                          const dayTotal = ops.reduce((sum: number, op: any) => {
+                            const val = parseFloat(String(op.basePlan?.[dayKey] || '0').replace(',', '.'));
+                            return sum + (isNaN(val) ? 0 : val);
+                          }, 0);
+                          return (
+                            <td key={i} className={cn("border border-black p-1 text-center font-bold text-[10px]", isWeekend(i) && "opacity-70")}>
+                               {dayTotal > 0 ? dayTotal : ''}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    )}
                     {ops.length === 0 && (
                       <tr>
                         <td colSpan={daysInMonth + 1} className="border border-black p-4 text-center italic text-gray-500">Nessun operatore inserito</td>
@@ -1489,7 +2120,34 @@ Esempio di output desiderato:
                 <Building2 className="mt-1 h-5 w-5 text-text-muted print:hidden" />
                 <div>
                   <div className="text-xs font-medium uppercase text-text-muted">Cantiere</div>
-                  <div className="font-bold uppercase text-xl">{activeSiteName}</div>
+                  {!isReadOnly && editingMainSiteId === activeSiteId ? (
+                    <div className="flex items-center gap-2">
+                       <input 
+                         value={editingMainSiteName} 
+                         onChange={(e) => setEditingMainSiteName(e.target.value)}
+                         className="border-b border-accent-olive bg-transparent outline-none text-xl font-bold uppercase min-w-[200px] text-text-main"
+                         autoFocus
+                         onBlur={handleSaveMainSiteEdit}
+                         onKeyDown={e => e.key === 'Enter' && handleSaveMainSiteEdit()}
+                       />
+                       <button onMouseDown={(e) => { e.preventDefault(); handleSaveMainSiteEdit(); }} onClick={handleSaveMainSiteEdit} className="text-accent-olive hover:text-accent-olive/80">
+                         <CheckCircle2 className="h-5 w-5" />
+                       </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 group">
+                      <div className="font-bold uppercase text-xl">{activeSiteName}</div>
+                      {!isReadOnly && (
+                        <button 
+                          onClick={() => handleStartEditMainSite(sites.find((s: any) => s.id === activeSiteId))}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity text-text-muted hover:text-accent-olive print:hidden"
+                          title="Modifica Nome Cantiere"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex items-start gap-3">
@@ -1560,12 +2218,34 @@ Esempio di output desiderato:
                 <Printer className="h-4 w-4" /> Stampa
               </button>
               {!isReadOnly && (
-                <button 
-                  onClick={() => setIsModalOpen(true)}
-                  className="flex items-center gap-2 rounded-xl bg-accent-olive px-4 py-2 font-medium text-white hover:bg-accent-olive/90"
-                >
-                  <UserPlus className="h-4 w-4" /> Aggiungi Operatore
-                </button>
+                <>
+                  <button 
+                    onClick={handleClearSite}
+                    className="flex items-center gap-2 rounded-xl bg-red-50 px-4 py-2 font-medium text-red-700 hover:bg-red-100 border border-red-200"
+                  >
+                    <Trash2 className="h-4 w-4" /> Svuota Cantiere
+                  </button>
+                  <button 
+                    onClick={handleAutoFillBasePlan}
+                    className="flex items-center gap-2 rounded-xl bg-orange-50 px-4 py-2 font-medium text-orange-700 hover:bg-orange-100 border border-orange-200"
+                  >
+                    <Wand2 className="h-4 w-4" /> Compila da Piano
+                  </button>
+                  <button 
+                    onClick={() => setIsModalOpen(true)}
+                    className="flex items-center gap-2 rounded-xl bg-accent-olive px-4 py-2 font-medium text-white hover:bg-accent-olive/90"
+                  >
+                    <UserPlus className="h-4 w-4" /> Aggiungi Operatore
+                  </button>
+                  <button 
+                    onClick={handleGenerateWithAI}
+                    disabled={isGeneratingAI}
+                    className="flex items-center gap-2 rounded-xl bg-purple-600 px-4 py-2 font-medium text-white hover:bg-purple-700 disabled:opacity-50"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    {isGeneratingAI ? 'Generazione in corso...' : 'Genera Mese AI'}
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -1638,15 +2318,167 @@ Esempio di output desiderato:
                         isReadOnly={isReadOnly}
                         daysInMonth={daysInMonth}
                         isWeekend={isWeekend}
+                        activeYear={activeYear}
+                        monthIndex={monthIndex}
                         handleDeleteOperator={handleDeleteOperator}
                         handleUpdateHours={handleUpdateHours}
                         cn={cn}
                       />
                     ))}
+                    {operators.length > 0 && (
+                      <tr className="bg-sidebar-bg font-bold border-t border-border-soft print:hidden">
+                        <td className="p-3 text-right uppercase text-xs text-text-muted print:text-black">Totale Ore</td>
+                        {Array.from({ length: daysInMonth }).map((_, i) => {
+                          const wday = new Date(activeYear, monthIndex, i + 1).getDay();
+                          const dayKey = wday === 0 ? 'DOM' : wday === 1 ? 'LUN' : wday === 2 ? 'MAR' : wday === 3 ? 'MER' : wday === 4 ? 'GIO' : wday === 5 ? 'VEN' : 'SAB';
+
+                          const dayTotal = operators.reduce((sum, op) => {
+                            const val = parseFloat(String(op.hours[i] || '0').replace(',', '.'));
+                            return sum + (isNaN(val) ? 0 : val);
+                          }, 0);
+                          
+                          const planTotal = operators.reduce((sum, op) => {
+                            const val = parseFloat(String(op.basePlan?.[dayKey] || '0').replace(',', '.'));
+                            return sum + (isNaN(val) ? 0 : val);
+                          }, 0);
+
+                          const hasMismatch = dayTotal !== planTotal && (dayTotal > 0 || planTotal > 0);
+
+                          return (
+                            <td key={i} className={cn("p-2 text-center text-text-main print:text-black", isWeekend(i) && "opacity-80", hasMismatch && "bg-red-100 text-red-600 print:bg-red-100")}>
+                              {dayTotal > 0 ? dayTotal : ''}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    )}
+                    {operators.length > 0 && (
+                      <tr className="bg-bg-main font-bold border-t border-border-soft text-text-muted print:hidden">
+                        <td className="p-3 text-right uppercase text-xs text-text-muted/70">Tot. Pianificato</td>
+                        {Array.from({ length: daysInMonth }).map((_, i) => {
+                          const wday = new Date(activeYear, monthIndex, i + 1).getDay();
+                          const dayKey = wday === 0 ? 'DOM' : wday === 1 ? 'LUN' : wday === 2 ? 'MAR' : wday === 3 ? 'MER' : wday === 4 ? 'GIO' : wday === 5 ? 'VEN' : 'SAB';
+                          
+                          const dayTotal = operators.reduce((sum, op) => {
+                            const val = parseFloat(String(op.basePlan?.[dayKey] || '0').replace(',', '.'));
+                            return sum + (isNaN(val) ? 0 : val);
+                          }, 0);
+                          return (
+                            <td key={i} className={cn("p-2 text-center opacity-70", isWeekend(i) && "opacity-50")}>
+                              {dayTotal > 0 ? dayTotal : ''}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </SortableContext>
             </DndContext>
+          </div>
+
+          {/* Base Plan Configuration Section */}
+          <div className="mb-8 print:hidden">
+            <h3 className="mb-4 font-serif text-lg font-bold uppercase">Configurazione Piano Settimanale Predefinito</h3>
+            <div className="rounded-3xl bg-white p-6 shadow-sm border border-border-soft overflow-x-auto">
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr>
+                    <th className="border-b border-border-soft p-3 text-left font-medium text-text-muted w-1/4">Operatore</th>
+                    <th className="border-b border-border-soft p-2 text-center font-medium text-text-muted">LUN</th>
+                    <th className="border-b border-border-soft p-2 text-center font-medium text-text-muted">MAR</th>
+                    <th className="border-b border-border-soft p-2 text-center font-medium text-text-muted">MER</th>
+                    <th className="border-b border-border-soft p-2 text-center font-medium text-text-muted">GIO</th>
+                    <th className="border-b border-border-soft p-2 text-center font-medium text-text-muted">VEN</th>
+                    <th className="border-b border-border-soft p-2 text-center font-medium text-text-muted">SAB</th>
+                    <th className="border-b border-border-soft p-2 text-center font-medium text-text-muted text-accent-olive">DOM</th>
+                    {!isReadOnly && <th className="border-b border-border-soft p-2 text-center font-medium text-text-muted w-12">Azioni</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {operators.map((op) => (
+                    <tr key={op.id} className="group border-b border-border-soft last:border-0 hover:bg-sidebar-bg">
+                      <td className="p-3 font-medium text-text-main">
+                        <input
+                           type="text"
+                           value={op.operatorName}
+                           onChange={(e) => handleUpdateOperatorName(op.id, e.target.value)}
+                           disabled={isReadOnly}
+                           className="w-full rounded bg-transparent p-1 font-medium text-text-main outline-none focus:bg-bg-main focus:ring-1 focus:ring-accent-olive disabled:opacity-50"
+                           placeholder="Nome Operatore"
+                        />
+                      </td>
+                      {(['LUN', 'MAR', 'MER', 'GIO', 'VEN', 'SAB', 'DOM'] as const).map((day) => (
+                        <td key={day} className="p-2 text-center">
+                          <input
+                            type="text"
+                            value={op.basePlan?.[day] ?? ''}
+                            onChange={(e) => handleUpdateBasePlan(op.id, day, e.target.value)}
+                            disabled={isReadOnly}
+                            className="w-12 rounded bg-bg-main p-1 text-center font-medium text-text-main outline-none focus:ring-1 focus:ring-accent-olive disabled:opacity-50"
+                          />
+                        </td>
+                      ))}
+                      {!isReadOnly && (
+                        <td className="p-2 text-center">
+                          <button
+                            onClick={() => handleDeleteOperator(op.id)}
+                            className="text-text-muted hover:text-red-500 rounded p-1 opacity-50 group-hover:opacity-100 transition-opacity"
+                            title="Elimina Operatore"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                  {operators.length === 0 && (
+                    <tr>
+                      <td colSpan={isReadOnly ? 8 : 9} className="p-4 text-center text-text-muted">Nessun operatore configurato</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+              {!isReadOnly && (
+                <div className="mt-4 flex justify-end">
+                  <button 
+                    onClick={() => setIsModalOpen(true)}
+                    className="flex items-center gap-2 rounded-xl border border-border-soft bg-transparent px-4 py-2 font-medium text-text-main hover:bg-sidebar-bg transition-colors"
+                  >
+                    <UserPlus className="h-4 w-4" /> Aggiungi Operatore
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Prompt Rules Section */}
+          <div className="mb-8 print:hidden">
+            <h3 className="mb-4 font-serif text-lg font-bold uppercase">Regole del Cantiere (Prompt AI)</h3>
+            <div className="rounded-3xl bg-white p-6 shadow-sm border border-border-soft">
+              <p className="text-sm text-text-muted mb-4">
+                Inserisci qui le regole specifiche per questo cantiere. Questo testo verrà incluso per istruire l'AI quando genera i turni.
+              </p>
+              <textarea
+                value={currentSettings.promptRules || ''}
+                onChange={(e) => updateSettings('promptRules', e.target.value)}
+                disabled={isReadOnly}
+                placeholder="Esempio: L'operatore X non può fare più di 4 ore al giorno. Il cantiere deve essere pulito sempre la mattina."
+                className="w-full h-32 rounded-xl border border-border-soft bg-bg-main p-4 font-medium text-text-main outline-none focus:border-accent-olive focus:ring-1 focus:ring-accent-olive disabled:opacity-50"
+              />
+              {!isReadOnly && (
+                <div className="mt-4 flex justify-end">
+                  <button 
+                    onClick={handleGenerateWithAI}
+                    disabled={isGeneratingAI}
+                    className="flex items-center gap-2 rounded-xl bg-purple-600 px-6 py-2.5 font-medium text-white hover:bg-purple-700 transition-colors disabled:opacity-50"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    {isGeneratingAI ? 'Elaborazione in corso...' : 'Invia a AI'}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Summary Section */}
@@ -1680,7 +2512,7 @@ Esempio di output desiderato:
               <div className="rounded-2xl border border-border-soft p-4">
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="font-serif font-bold uppercase">Noleggi</h3>
-                {!isReadOnly && !isPastMonth && (
+                {!isReadOnly && (
                   <button 
                     onClick={() => setModalConfig({isOpen: true, type: 'rental'})}
                     className="flex h-6 w-6 items-center justify-center rounded-full bg-sidebar-bg text-accent-olive hover:bg-border-soft"
@@ -1695,7 +2527,7 @@ Esempio di output desiderato:
               </div>
               {rentals.length === 0 ? (
                 <div className="py-4 text-center text-sm text-text-muted">
-                  Nessuna voce {(!isReadOnly && !isPastMonth) && "— clicca + per aggiungere"}
+                  Nessuna voce {!isReadOnly && "— clicca + per aggiungere"}
                 </div>
               ) : (
                 <>
@@ -1703,7 +2535,7 @@ Esempio di output desiderato:
                     {rentals.map(rental => (
                       <div key={rental.id} className="flex justify-between items-center text-sm border-b border-border-soft/50 py-2 last:border-0">
                         <div className="flex items-center gap-2">
-                          {(!isReadOnly && !isPastMonth) && (
+                          {!isReadOnly && (
                             <button onClick={() => handleDeleteItem(rental.id, 'rental')} className="text-text-muted hover:text-red-500">
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
@@ -1725,7 +2557,7 @@ Esempio di output desiderato:
             <div className="rounded-2xl border border-border-soft p-4">
               <div className="mb-4 flex items-center justify-between">
                 <h3 className="font-serif font-bold uppercase">Derattizzazione</h3>
-                {!isReadOnly && !isPastMonth && (
+                {!isReadOnly && (
                   <button 
                     onClick={() => setModalConfig({isOpen: true, type: 'deratization'})}
                     className="flex h-6 w-6 items-center justify-center rounded-full bg-sidebar-bg text-accent-olive hover:bg-border-soft"
@@ -1740,7 +2572,7 @@ Esempio di output desiderato:
               </div>
               {deratizations.length === 0 ? (
                 <div className="py-4 text-center text-sm text-text-muted">
-                  Nessuna voce {(!isReadOnly && !isPastMonth) && "— clicca + per aggiungere"}
+                  Nessuna voce {!isReadOnly && "— clicca + per aggiungere"}
                 </div>
               ) : (
                 <>
@@ -1748,7 +2580,7 @@ Esempio di output desiderato:
                     {deratizations.map(item => (
                       <div key={item.id} className="flex justify-between items-center text-sm border-b border-border-soft/50 py-2 last:border-0">
                         <div className="flex items-center gap-2">
-                          {(!isReadOnly && !isPastMonth) && (
+                          {!isReadOnly && (
                             <button onClick={() => handleDeleteItem(item.id, 'deratization')} className="text-text-muted hover:text-red-500">
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
@@ -1821,6 +2653,76 @@ Esempio di output desiderato:
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* AI Generate Modal */}
+      {isGeneratingAI && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-3xl bg-white p-8 text-center shadow-2xl">
+            <div className="mx-auto mb-6 flex h-16 w-16 animate-bounce items-center justify-center rounded-full bg-purple-100 text-purple-600">
+              <Sparkles className="h-8 w-8 animate-pulse" />
+            </div>
+            <h3 className="mb-2 font-serif text-2xl font-bold text-gray-900">Motore AI</h3>
+            <p className="text-gray-500 font-medium">{generatingAIStatus}</p>
+          </div>
+        </div>
+      )}
+
+      {/* ConformFillPlanModal */}
+      {isConfirmClearSiteOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-3xl bg-card-bg p-6 shadow-xl border border-border-soft">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-500">
+              <Trash2 className="h-6 w-6" />
+            </div>
+            <h3 className="text-center font-serif text-xl font-bold mb-2">Svuota Cantiere</h3>
+            <p className="text-center text-sm text-text-muted mb-6">
+              Questa azione eliminerà tutte le ore inserite per questo cantiere in tutti i servizi nel mese corrente. Vuoi procedere?
+            </p>
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={() => setIsConfirmClearSiteOpen(false)}
+                className="flex-1 rounded-xl bg-sidebar-bg px-4 py-2.5 font-medium text-text-main transition-colors hover:bg-border-soft"
+              >
+                Annulla
+              </button>
+              <button 
+                onClick={confirmClearSite}
+                className="flex-1 rounded-xl bg-red-500 px-4 py-2.5 font-medium text-white transition-colors hover:bg-red-600"
+              >
+                Conferma
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isConfirmFillPlanOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-3xl bg-card-bg p-6 shadow-xl border border-border-soft">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-orange-100 text-orange-500">
+              <Wand2 className="h-6 w-6" />
+            </div>
+            <h3 className="text-center font-serif text-xl font-bold mb-2">Compila da Piano</h3>
+            <p className="text-center text-sm text-text-muted mb-6">
+              Questa azione sovrascriverà le ore degli operatori per il mese corrente con quelle del piano base impostato. Vuoi procedere?
+            </p>
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={() => setIsConfirmFillPlanOpen(false)}
+                className="flex-1 rounded-xl bg-sidebar-bg px-4 py-2.5 font-medium text-text-main transition-colors hover:bg-border-soft"
+              >
+                Annulla
+              </button>
+              <button 
+                onClick={confirmAutoFillBasePlan}
+                className="flex-1 rounded-xl bg-orange-500 px-4 py-2.5 font-medium text-white transition-colors hover:bg-orange-600"
+              >
+                Conferma
+              </button>
+            </div>
           </div>
         </div>
       )}

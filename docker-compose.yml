@@ -1,8 +1,12 @@
+version: '3.8'
+
 services:
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+  web:
+    build: .
     ports:
-      - "3000:80"
+      - "80:3000"
+    environment:
+      - NODE_ENV=production
+      # Se utilizzi le API Gemini dal backend, inserisci qui la tua chiave o lasciala commentata
+      # - GEMINI_API_KEY=la_tua_chiave_gemini
     restart: always

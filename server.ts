@@ -159,6 +159,37 @@ async function startServer() {
     }
   });
 
+  app.post("/api/gemini", async (req, res) => {
+    try {
+      if (!process.env.GEMINI_API_KEY) {
+         return res.status(500).json({ error: "Chiave Google interna non configurata sul server." });
+      }
+      const rawKey = process.env.GEMINI_API_KEY.trim();
+      if (rawKey === 'MY_GEMINI_API_KEY') {
+         return res.status(500).json({ error: "Ho rimosso il vincolo. Ora ricarica la pagina intera (F5), poi vai in Impostazioni -> Secrets (Environment Variables) e clicca sull'icona del cestino per eliminare la riga GEMINI_API_KEY. Una volta fatto, ricarica la pagina e funzionerà." });
+      }
+      const { GoogleGenAI } = await import("@google/genai");
+      
+      const ai = new GoogleGenAI({ apiKey: rawKey });
+      const { systemInstruction, contents, model = "gemini-2.5-flash" } = req.body;
+      
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents,
+          config: {
+            systemInstruction,
+          }
+        });
+        res.json({ text: response.text });
+      } catch (gen_e: any) {
+         res.status(500).json({ error: gen_e.message });
+      }
+    } catch(e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
