@@ -2,7 +2,7 @@ services:
   web:
     build: .
     ports:
-      - "3000:3000"
+      - "8080:3000"
     environment:
       - NODE_ENV=production
       # Se utilizzi le API Gemini dal backend, inserisci qui la tua chiave o lasciala commentata
