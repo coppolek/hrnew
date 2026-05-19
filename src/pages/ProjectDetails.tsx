@@ -347,6 +347,57 @@ const fetchStoredDataForMonthYear = async (projectId: string, year: number, mont
       });
     }
 
+    // "sempre essere importati dal mese precedente" -> Merge from previous month if they are missing
+    d.rentalStore = d.rentalStore || {};
+    d.deratStore = d.deratStore || {};
+    
+    let checkY = year;
+    let checkM = monthIdx - 1;
+    let prevDataFound = null;
+    
+    for (let i = 0; i < 24; i++) {
+      if (checkM < 0) {
+        checkM = 11;
+        checkY--;
+      }
+      const pKey = `appData_${projectId}_${checkY}_${checkM}`;
+      const pStored = await fetchFromFirestore(pKey);
+      if (pStored) {
+        prevDataFound = pStored;
+        break;
+      }
+      checkM--;
+    }
+
+    if (prevDataFound) {
+       const mRent = prevDataFound.rentalStore || (prevDataFound.rentals && prevDataFound.sites?.length > 0 ? {[prevDataFound.sites[0].id]: prevDataFound.rentals} : {});
+       const mDer = prevDataFound.deratStore || (prevDataFound.deratizations && prevDataFound.sites?.length > 0 ? {[prevDataFound.sites[0].id]: prevDataFound.deratizations} : {});
+       
+       (d.sites || []).forEach((site: any) => {
+          const sId = site.id;
+          const currRentals = d.rentalStore[sId] || [];
+          const currDerats = d.deratStore[sId] || [];
+          
+          if (mRent[sId]) {
+             mRent[sId].forEach((prevRent: any) => {
+                if (!currRentals.find((cr: any) => cr.description.trim().toLowerCase() === prevRent.description.trim().toLowerCase())) {
+                   currRentals.push({...prevRent, id: Date.now() + Math.random().toString()});
+                }
+             });
+          }
+          if (mDer[sId]) {
+             mDer[sId].forEach((prevDer: any) => {
+                if (!currDerats.find((cd: any) => cd.description.trim().toLowerCase() === prevDer.description.trim().toLowerCase())) {
+                   currDerats.push({...prevDer, id: Date.now() + Math.random().toString()});
+                }
+             });
+          }
+          
+          d.rentalStore[sId] = currRentals;
+          d.deratStore[sId] = currDerats;
+       });
+    }
+
     return d;
   }
 
