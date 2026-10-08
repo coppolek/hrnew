@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ShieldAlert, Users, Database, Play, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, ShieldAlert, Users, Database, Play, Plus, Trash2, UploadCloud, CheckCircle2, AlertCircle, FileArchive, Loader2 } from 'lucide-react';
 import { activeFirebaseConfig } from '../firebase';
 import { initializeApp, deleteApp } from 'firebase/app';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
-import { fetchFromFirestore, syncToFirestore } from '../services/db';
+import { getFirestore, doc } from 'firebase/firestore';
+import { fetchFromFirestore, syncToFirestore, defaultOracleConfig } from '../services/db';
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -13,10 +13,40 @@ export default function Settings() {
   const [isTesting, setIsTesting] = useState(false);
   const [dbType, setDbType] = useState(() => {
     const saved = localStorage.getItem('appDbType');
-    const defaultType = import.meta.env.VITE_DEFAULT_DB_TYPE || 'postgres';
+    const defaultType = import.meta.env.VITE_DEFAULT_DB_TYPE || 'oracle';
     return saved ? saved : defaultType;
   });
-  
+
+  const [oracleConfig, setOracleConfig] = useState(() => {
+    const raw = localStorage.getItem('customOracleConfig');
+    return raw ? { ...defaultOracleConfig, ...JSON.parse(raw) } : defaultOracleConfig;
+  });
+
+  const [walletStatus, setWalletStatus] = useState<{ installed: boolean, files: string[], services: string[] }>({
+    installed: false,
+    files: [],
+    services: []
+  });
+  const [isUploadingWallet, setIsUploadingWallet] = useState(false);
+  const [walletUploadMessage, setWalletUploadMessage] = useState<string | null>(null);
+  const [oracleTestResult, setOracleTestResult] = useState<{ success: boolean, message: string } | null>(null);
+
+  const [backendOracleStatus, setBackendOracleStatus] = useState<any>(null);
+
+  const refreshBackendStatus = () => {
+    fetch('/api/oracle/status')
+      .then(res => res.json())
+      .then(data => {
+        if (data.wallet) setWalletStatus(data.wallet);
+        setBackendOracleStatus(data);
+      })
+      .catch(err => console.error("Could not fetch oracle status:", err));
+  };
+
+  useEffect(() => {
+    refreshBackendStatus();
+  }, []);
+
   const [operators, setOperators] = useState<{id: string, username: string, password: string}[]>([]);
   
   useEffect(() => {
@@ -104,16 +134,86 @@ export default function Settings() {
   });
   
   const handleConfigChange = (key: string, value: string) => {
-    if (dbType === 'firebase') {
+    if (dbType === 'oracle') {
+      setOracleConfig((prev: any) => ({ ...prev, [key]: value }));
+    } else if (dbType === 'firebase') {
       setDbConfig(prev => ({ ...prev, [key]: value }));
     } else {
       setPostgresConfig((prev: any) => ({ ...prev, [key]: value }));
     }
   };
 
+  const handleWalletUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      alert("Seleziona un file archivio .zip (es. Wallet_CLVYCAZ7VGDAAK32.zip)");
+      return;
+    }
+
+    setIsUploadingWallet(true);
+    setWalletUploadMessage(null);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (ev) => {
+        const base64 = ev.target?.result as string;
+        const res = await fetch('/api/oracle/upload-wallet', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            zipBase64: base64,
+            walletPassword: oracleConfig.walletPassword || oracleConfig.password
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          setWalletStatus(data.status);
+          setWalletUploadMessage(data.message);
+          if (data.status?.services?.length > 0 && !data.status.services.includes(oracleConfig.serviceName)) {
+            const preferred = data.status.services.find((s: string) => s.endsWith('_low')) || data.status.services[0];
+            setOracleConfig((prev: any) => ({ ...prev, serviceName: preferred }));
+          }
+          alert(data.message);
+        } else {
+          setWalletUploadMessage("Errore: " + data.error);
+          alert("Errore durante il caricamento del wallet: " + data.error);
+        }
+        setIsUploadingWallet(false);
+      };
+      reader.readAsDataURL(file);
+    } catch (err: any) {
+      setIsUploadingWallet(false);
+      alert("Errore lettura file: " + err.message);
+    }
+  };
+
   const handleTestConnection = async () => {
     setIsTesting(true);
-    if (dbType === 'firebase') {
+    if (dbType === 'oracle') {
+      try {
+        const res = await fetch('/api/oracle/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(oracleConfig)
+        });
+        const data = await res.json();
+        if (data.success) {
+          setOracleTestResult({ success: true, message: data.message });
+          alert('Connessione al database Oracle Autonomous Database (ATP) riuscita con successo!\nLa tabella APP_DATA è stata verificata.');
+          await fetch('/api/db/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dbType: 'oracle', oracle: oracleConfig })
+          });
+        } else {
+          setOracleTestResult({ success: false, message: data.error });
+          alert('Errore di connessione a Oracle:\n' + data.error);
+        }
+      } catch (err: any) {
+        setOracleTestResult({ success: false, message: err.message });
+        alert('Errore di connessione al server: ' + err.message);
+      }
+    } else if (dbType === 'firebase') {
       try {
         const tempApp = initializeApp(dbConfig, 'test-connection-app-' + Date.now());
         const tempDb = getFirestore(tempApp, dbConfig.firestoreDatabaseId || undefined);
@@ -150,7 +250,7 @@ export default function Settings() {
 
         await deleteApp(tempApp);
       } catch (err: any) {
-        alert('Errore di connessione o permessi limitati in Firebase:\\n' + err.message);
+        alert('Errore di connessione o permessi limitati in Firebase:\n' + err.message);
       }
     } else {
       try {
@@ -175,7 +275,7 @@ export default function Settings() {
              console.error("Failed to sync global config", e);
           }
         } else {
-          alert('Errore di connessione a Postgres:\\n' + data.error);
+          alert('Errore di connessione a Postgres:\n' + data.error);
         }
       } catch (err: any) {
         alert('Errore di rete durante il test Postgres: impossibile contattare il server locale.');
@@ -190,7 +290,16 @@ export default function Settings() {
 
   useEffect(() => {
     localStorage.setItem('appDbType', dbType);
+    fetch('/api/db/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dbType })
+    }).catch(() => {});
   }, [dbType]);
+
+  useEffect(() => {
+    localStorage.setItem('customOracleConfig', JSON.stringify(oracleConfig));
+  }, [oracleConfig]);
 
   useEffect(() => {
     localStorage.setItem('customGeminiApiKey', customGeminiKey);
@@ -398,17 +507,17 @@ export default function Settings() {
               </div>
             </div>
 
-            <div className="mb-6 flex gap-4 w-full border-b border-border-soft pb-4">
+            <div className="mb-6 flex flex-wrap gap-4 w-full border-b border-border-soft pb-4">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input 
                   type="radio" 
                   name="dbtype" 
-                  value="firebase" 
-                  checked={dbType === 'firebase'} 
-                  onChange={() => setDbType('firebase')}
+                  value="oracle" 
+                  checked={dbType === 'oracle'} 
+                  onChange={() => setDbType('oracle')}
                   className="accent-accent-olive"
                 />
-                <span className="font-medium text-sm">Firebase Firestore</span>
+                <span className="font-semibold text-sm text-accent-olive">Oracle Cloud (Autonomous DB)</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input 
@@ -421,18 +530,185 @@ export default function Settings() {
                 />
                 <span className="font-medium text-sm">Postgres (Supabase)</span>
               </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input 
+                  type="radio" 
+                  name="dbtype" 
+                  value="firebase" 
+                  checked={dbType === 'firebase'} 
+                  onChange={() => setDbType('firebase')}
+                  className="accent-accent-olive"
+                />
+                <span className="font-medium text-sm">Firebase Firestore</span>
+              </label>
             </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="p-4 bg-bg-main rounded-2xl border border-border-soft md:col-span-2">
-                <p className="text-xs font-bold uppercase text-text-muted mb-1">Stato Connessione Corrente</p>
-                <div className="flex items-center gap-2 font-medium text-emerald-600">
-                  <div className="h-2.5 w-2.5 rounded-full bg-emerald-500"></div>
-                  In uso ({dbType === 'firebase' ? 'Firestore' : 'Postgres / Supabase'})
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-bold uppercase text-text-muted">Collegamento Database Backend Perenne</p>
+                  <button 
+                    onClick={refreshBackendStatus}
+                    className="text-xs text-accent-olive hover:underline font-semibold"
+                  >
+                    Aggiorna Stato Backend
+                  </button>
                 </div>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 font-medium text-emerald-600">
+                    <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                    Backend Perenne Attivo ({dbType === 'oracle' ? 'Oracle Autonomous Database ATP' : dbType === 'firebase' ? 'Firebase' : 'Postgres'})
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {backendOracleStatus?.connected ? (
+                      <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1.5">
+                        <CheckCircle2 className="h-3 w-3" /> Oracle Cloud ATP Connesso ({backendOracleStatus?.totalRecords || 0} record replicati)
+                      </span>
+                    ) : (
+                      <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 flex items-center gap-1.5">
+                        <AlertCircle className="h-3 w-3" /> Persistenza Server Attiva ({backendOracleStatus?.totalRecords || 0} record su disco)
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <p className="text-xs text-text-muted mt-2">
+                  Il server gestisce un pool di connessioni permanente e persistenza duratura su disco locale. Nessuna perdita di dati delle presenze o cantieri in caso di timeout o attesa del wallet.
+                </p>
               </div>
-              
-              {dbType === 'firebase' ? (
+
+              {dbType === 'oracle' ? (
+                <>
+                  {/* Oracle Wallet Upload Box */}
+                  <div className="md:col-span-2 rounded-2xl border border-dashed border-accent-olive/40 bg-accent-olive/5 p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-olive/10 text-accent-olive">
+                          <FileArchive className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-text-main">File Wallet Oracle (.zip)</h4>
+                          <p className="text-xs text-text-muted">
+                            Oracle Autonomous Database usa l'autenticazione mTLS. Carica il file zip scaricato da Oracle Cloud (es. <code className="font-mono bg-white px-1 py-0.5 rounded border border-border-soft">Wallet_CLVYCAZ7VGDAAK32.zip</code>).
+                          </p>
+                        </div>
+                      </div>
+                      <div>
+                        {walletStatus.installed ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> Wallet Installato
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
+                            <AlertCircle className="h-3.5 w-3.5 text-amber-600" /> Wallet Mancante
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex flex-col sm:flex-row items-center gap-3">
+                      <label className="flex w-full sm:w-auto items-center justify-center gap-2 rounded-xl bg-accent-olive px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-accent-olive/90 cursor-pointer transition-colors disabled:opacity-50">
+                        {isUploadingWallet ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" /> Caricamento ed estrazione...
+                          </>
+                        ) : (
+                          <>
+                            <UploadCloud className="h-4 w-4" /> {walletStatus.installed ? 'Sostituisci Wallet (.zip)' : 'Carica Wallet_CLVYCAZ7VGDAAK32.zip'}
+                          </>
+                        )}
+                        <input 
+                          type="file" 
+                          accept=".zip" 
+                          onChange={handleWalletUpload}
+                          disabled={isUploadingWallet}
+                          className="hidden" 
+                        />
+                      </label>
+                      <span className="text-xs text-text-muted">
+                        {walletStatus.installed 
+                          ? `Certificati trovati: ${walletStatus.files.filter(f => f.includes('wallet') || f.includes('.pem') || f.includes('.sso')).join(', ') || 'OK'}`
+                          : 'Trascina o clicca per caricare il file .zip del wallet'}
+                      </span>
+                    </div>
+
+                    {walletUploadMessage && (
+                      <p className="mt-3 text-xs font-medium text-emerald-700 bg-emerald-50 p-2 rounded-lg border border-emerald-200">
+                        {walletUploadMessage}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="p-4 bg-bg-main rounded-2xl border border-border-soft overflow-hidden">
+                    <p className="text-xs font-bold uppercase text-text-muted mb-1">Utente Database</p>
+                    <input 
+                      type="text"
+                      value={oracleConfig.user || 'ADMIN'}
+                      onChange={(e) => handleConfigChange('user', e.target.value)}
+                      className="w-full bg-transparent font-mono text-sm outline-none border-b border-border-soft focus:border-accent-olive py-1"
+                      placeholder="ADMIN"
+                    />
+                  </div>
+
+                  <div className="p-4 bg-bg-main rounded-2xl border border-border-soft overflow-hidden">
+                    <p className="text-xs font-bold uppercase text-text-muted mb-1">Password Database (ADMIN)</p>
+                    <input 
+                      type="password"
+                      value={oracleConfig.password || ''}
+                      onChange={(e) => handleConfigChange('password', e.target.value)}
+                      className="w-full bg-transparent font-mono text-sm outline-none border-b border-border-soft focus:border-accent-olive py-1"
+                      placeholder="Sveva310320@"
+                    />
+                  </div>
+
+                  <div className="p-4 bg-bg-main rounded-2xl border border-border-soft overflow-hidden">
+                    <p className="text-xs font-bold uppercase text-text-muted mb-1">Nome Servizio TNS</p>
+                    <select
+                      value={oracleConfig.serviceName || 'clvycaz7vgdaak32_low'}
+                      onChange={(e) => handleConfigChange('serviceName', e.target.value)}
+                      className="w-full bg-transparent font-mono text-sm outline-none border-b border-border-soft focus:border-accent-olive py-1"
+                    >
+                      {walletStatus.services.length > 0 ? (
+                        walletStatus.services.map(s => (
+                          <option key={s} value={s}>{s}</option>
+                        ))
+                      ) : (
+                        <>
+                          <option value="clvycaz7vgdaak32_low">clvycaz7vgdaak32_low (Consigliato)</option>
+                          <option value="clvycaz7vgdaak32_medium">clvycaz7vgdaak32_medium</option>
+                          <option value="clvycaz7vgdaak32_high">clvycaz7vgdaak32_high</option>
+                          <option value="clvycaz7vgdaak32_tp">clvycaz7vgdaak32_tp</option>
+                          <option value="clvycaz7vgdaak32_tpurgent">clvycaz7vgdaak32_tpurgent</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
+
+                  <div className="p-4 bg-bg-main rounded-2xl border border-border-soft overflow-hidden">
+                    <p className="text-xs font-bold uppercase text-text-muted mb-1">Password del Wallet (se diversa)</p>
+                    <input 
+                      type="password"
+                      value={oracleConfig.walletPassword || ''}
+                      onChange={(e) => handleConfigChange('walletPassword', e.target.value)}
+                      className="w-full bg-transparent font-mono text-sm outline-none border-b border-border-soft focus:border-accent-olive py-1"
+                      placeholder="Uguale alla password ADMIN"
+                    />
+                  </div>
+
+                  <div className="p-4 bg-bg-main rounded-2xl border border-border-soft overflow-hidden md:col-span-2">
+                    <p className="text-xs font-bold uppercase text-text-muted mb-1 flex justify-between">
+                      <span>Stringa di Connessione TCPS (Autonomous Database Cloud)</span>
+                      <span className="text-[10px] text-text-muted">Porta 1522 / adb.eu-turin-1.oraclecloud.com</span>
+                    </p>
+                    <textarea 
+                      rows={3}
+                      value={oracleConfig.connectString || ''}
+                      onChange={(e) => handleConfigChange('connectString', e.target.value)}
+                      className="w-full bg-transparent font-mono text-xs outline-none border border-border-soft rounded-lg p-2 focus:border-accent-olive"
+                      placeholder="(description= (retry_count=20)...)"
+                    />
+                  </div>
+                </>
+              ) : dbType === 'firebase' ? (
                 <>
                   <div className="p-4 bg-bg-main rounded-2xl border border-border-soft overflow-hidden">
                     <p className="text-xs font-bold uppercase text-text-muted mb-1 flex justify-between">Project ID</p>

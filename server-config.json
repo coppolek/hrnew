@@ -1,0 +1,10 @@
+{
+  "dbType": "oracle",
+  "oracle": {
+    "user": "ADMIN",
+    "password": "Sveva310320@",
+    "serviceName": "clvycaz7vgdaak32_low",
+    "connectString": "(description= (retry_count=20)(retry_delay=3)(address=(protocol=tcps)(port=1522)(host=adb.eu-turin-1.oraclecloud.com))(connect_data=(service_name=g4baf80d64d08cb_clvycaz7vgdaak32_low.adb.oraclecloud.com))(security=(ssl_server_dn_match=yes)))",
+    "walletPassword": "Sveva310320@"
+  }
+}

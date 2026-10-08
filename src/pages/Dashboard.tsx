@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Folder, Plus, Trash2, ArrowRight, Settings, LogOut, Users, Shield, X, Save, Search, Bell, Download, UploadCloud } from 'lucide-react';
-import { fetchFromFirestore, syncToFirestore, exportAllData, importAllData } from '../services/db';
+import { Folder, Plus, Trash2, ArrowRight, Settings, LogOut, Users, Shield, X, Save, Search, Bell, Download, UploadCloud, Database } from 'lucide-react';
+import { fetchFromFirestore, syncToFirestore, exportAllData, importAllData, getActiveDbType } from '../services/db';
 
 const defaultProjects = [
   {
@@ -26,6 +26,8 @@ export default function Dashboard() {
   const [deleteModalProject, setDeleteModalProject] = useState<any>(null);
 
   const [dbError, setDbError] = useState<string | null>(null);
+  const [walletPending, setWalletPending] = useState(false);
+  const [backendStatus, setBackendStatus] = useState<any>(null);
   const fullImportRef = useRef<HTMLInputElement>(null);
 
   const handleExportFullDB = async () => {
@@ -105,6 +107,23 @@ export default function Dashboard() {
       }
     };
     loadFromDb();
+
+    const currentDbType = getActiveDbType();
+    if (currentDbType === 'oracle') {
+      fetch('/api/oracle/status')
+        .then(r => r.json())
+        .then(data => {
+          if (data && data.success) {
+            setBackendStatus(data);
+            if (!data.walletInstalled) {
+              setWalletPending(true);
+            } else {
+              setWalletPending(false);
+            }
+          }
+        })
+        .catch(() => {});
+    }
   }, []);
 
   useEffect(() => {
@@ -316,11 +335,46 @@ export default function Dashboard() {
           )}
         </div>
         
+        {/* Persistent Backend Database Status Banner */}
+        {backendStatus?.connected ? (
+          <div className="mb-6 p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2.5">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+              </span>
+              <span className="font-semibold">Database Backend: Collegamento Perenne Attivo su Oracle Cloud (ATP)</span>
+              <span className="text-emerald-700 hidden sm:inline">• Pool di connessione permanente & {backendStatus.totalRecords} record sincronizzati</span>
+            </div>
+            <button onClick={() => navigate('/settings')} className="text-emerald-700 hover:text-emerald-900 font-semibold underline underline-offset-2">
+              Dettagli DB
+            </button>
+          </div>
+        ) : walletPending ? (
+          <div className="mb-8 p-4 rounded-xl bg-accent-olive/10 border border-accent-olive/30 text-text-main flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <Database className="h-5 w-5 shrink-0 mt-0.5 text-accent-olive" />
+              <div>
+                <p className="font-semibold text-sm text-text-main">Database Backend: Salvataggio Perenne Attivo sul Server</p>
+                <p className="text-xs mt-1 text-text-muted">
+                  Tutti i dati e le ore vengono memorizzati perennemente nel backend. Per attivare la replica mTLS diretta su Oracle Autonomous Database (ATP), carica il file <strong className="text-text-main">Wallet_CLVYCAZ7VGDAAK32.zip</strong> nelle Impostazioni.
+                </p>
+              </div>
+            </div>
+            <button 
+              onClick={() => navigate('/settings')} 
+              className="shrink-0 rounded-lg bg-accent-olive px-4 py-2 text-xs font-semibold text-white hover:bg-accent-olive/90 transition-colors shadow-sm"
+            >
+              Carica Wallet →
+            </button>
+          </div>
+        ) : null}
+
         {dbError && (
           <div className="mb-8 p-4 rounded-xl bg-orange-50 border border-orange-200 text-orange-800 flex items-start gap-3">
             <Shield className="h-5 w-5 shrink-0 mt-0.5" />
             <div>
-              <p className="font-medium text-sm">Avviso Database Supabase</p>
+              <p className="font-medium text-sm">Avviso Database</p>
               <p className="text-xs mt-1 opacity-90">{dbError}</p>
               <button onClick={() => navigate('/settings')} className="mt-2 text-xs font-semibold underline decoration-orange-300 underline-offset-2">Vai alle Impostazioni →</button>
             </div>

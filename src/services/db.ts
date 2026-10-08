@@ -1,9 +1,64 @@
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 
+export const defaultOracleConfig = {
+  user: "ADMIN",
+  password: "Sveva310320@",
+  serviceName: "clvycaz7vgdaak32_low",
+  connectString: "(description= (retry_count=20)(retry_delay=3)(address=(protocol=tcps)(port=1522)(host=adb.eu-turin-1.oraclecloud.com))(connect_data=(service_name=g4baf80d64d08cb_clvycaz7vgdaak32_low.adb.oraclecloud.com))(security=(ssl_server_dn_match=yes)))",
+  walletPassword: "Sveva310320@"
+};
+
+export const getOracleConfig = () => {
+  const raw = localStorage.getItem('customOracleConfig');
+  if (raw) {
+    try {
+      return { ...defaultOracleConfig, ...JSON.parse(raw) };
+    } catch (_) {}
+  }
+  return defaultOracleConfig;
+};
+
+export const getActiveDbType = (): string => {
+  const current = localStorage.getItem('appDbType');
+  if (!current || current === 'firebase') {
+    localStorage.setItem('appDbType', 'oracle');
+    return 'oracle';
+  }
+  return current;
+};
+
+export const getBackendOracleStatus = async () => {
+  try {
+    const res = await fetch('/api/oracle/status');
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return await res.json();
+  } catch (err: any) {
+    return { success: false, connected: false, error: err.message };
+  }
+};
+
 export const syncToFirestore = async (key: string, data: any) => {
-  const defaultDbType = import.meta.env.VITE_DEFAULT_DB_TYPE || 'postgres';
-  const dbType = localStorage.getItem('appDbType') || defaultDbType; // default to postgres
+  const dbType = getActiveDbType();
+
+  if (dbType === 'oracle') {
+    const config = getOracleConfig();
+    try {
+      try { localStorage.setItem('cached_' + key, JSON.stringify(data)); } catch (_) {}
+      const resp = await fetch('/api/oracle/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, data, config })
+      });
+      const json = await resp.json();
+      if (!json.success && !json.storedLocally) {
+        console.warn("Oracle sync warning:", json.error || json.message);
+      }
+    } catch (err: any) {
+      console.warn("Oracle sync network warning (persisted locally):", err.message);
+    }
+    return;
+  }
 
   if (dbType === 'postgres') {
     const rawConfig = localStorage.getItem('customPostgresConfig');
@@ -44,8 +99,33 @@ export const syncToFirestore = async (key: string, data: any) => {
 };
 
 export const fetchFromFirestore = async (key: string) => {
-  const defaultDbType = import.meta.env.VITE_DEFAULT_DB_TYPE || 'postgres';
-  const dbType = localStorage.getItem('appDbType') || defaultDbType; // default to postgres
+  const dbType = getActiveDbType();
+
+  if (dbType === 'oracle') {
+    const config = getOracleConfig();
+    try {
+      const res = await fetch('/api/oracle/fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, config })
+      });
+      const json = await res.json();
+      if (json.success && json.data !== null && json.data !== undefined) {
+        try { localStorage.setItem('cached_' + key, JSON.stringify(json.data)); } catch(_) {}
+        return json.data;
+      }
+    } catch (err: any) {
+      console.warn("Oracle fetch fallback to local storage:", err.message);
+    }
+
+    const cached = localStorage.getItem('cached_' + key);
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch (_) {}
+    }
+    return null;
+  }
 
   if (dbType === 'postgres') {
     const rawConfig = localStorage.getItem('customPostgresConfig');
@@ -91,8 +171,20 @@ export const fetchFromFirestore = async (key: string) => {
 };
 
 export const exportAllData = async () => {
-  const defaultDbType = import.meta.env.VITE_DEFAULT_DB_TYPE || 'postgres';
+  const defaultDbType = import.meta.env.VITE_DEFAULT_DB_TYPE || 'oracle';
   const dbType = localStorage.getItem('appDbType') || defaultDbType;
+
+  if (dbType === 'oracle') {
+    const config = getOracleConfig();
+    const res = await fetch('/api/oracle/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config })
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || "Failed to export from Oracle");
+    return json.data;
+  }
 
   if (dbType === 'postgres') {
     const rawConfig = localStorage.getItem('customPostgresConfig');
@@ -121,8 +213,20 @@ export const exportAllData = async () => {
 };
 
 export const importAllData = async (data: any[]) => {
-  const defaultDbType = import.meta.env.VITE_DEFAULT_DB_TYPE || 'postgres';
+  const defaultDbType = import.meta.env.VITE_DEFAULT_DB_TYPE || 'oracle';
   const dbType = localStorage.getItem('appDbType') || defaultDbType;
+
+  if (dbType === 'oracle') {
+    const config = getOracleConfig();
+    const res = await fetch('/api/oracle/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config, data })
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || "Failed to import into Oracle");
+    return;
+  }
 
   if (dbType === 'postgres') {
     const rawConfig = localStorage.getItem('customPostgresConfig');
@@ -140,8 +244,6 @@ export const importAllData = async (data: any[]) => {
   } else {
     for (const item of data) {
       if (item.key && item.value) {
-        // Need to parse if importing into key-values, but we just use syncToFirestore which expects object. Wait, appData stores {value: stringified}.
-        // If we use stringified values, we need to parse them before syncing
         try {
            const parsedValue = JSON.parse(item.value);
            await syncToFirestore(item.key, parsedValue);

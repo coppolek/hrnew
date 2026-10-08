@@ -1,0 +1,11 @@
+{
+  "appProjects": [
+    {
+      "id": "1",
+      "name": "scm",
+      "description": "Gestione ore per cantieri e servizi.",
+      "siteCount": 8,
+      "permissions": {}
+    }
+  ]
+}

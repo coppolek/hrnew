@@ -5,9 +5,6 @@
 
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from './firebase';
-
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import ProjectDetails from './pages/ProjectDetails';
@@ -19,22 +16,30 @@ export default function App() {
   useEffect(() => {
     const fetchGlobalDatabaseConfig = async () => {
       try {
-        const docRef = doc(db, 'appData', 'globalDbConfig');
-        const snap = await getDoc(docRef);
-        if (snap.exists()) {
-          const data = snap.data();
-          if (data.value) {
-             const configData = JSON.parse(data.value);
-             if (configData.dbType) {
-               localStorage.setItem('appDbType', configData.dbType);
-             }
-             if (configData.postgresConfig) {
-               localStorage.setItem('customPostgresConfig', JSON.stringify(configData.postgresConfig));
-             }
+        const resp = await fetch('/api/db/config');
+        if (resp.ok) {
+          const cfg = await resp.json();
+          if (cfg.dbType) {
+            localStorage.setItem('appDbType', cfg.dbType);
+          } else {
+            localStorage.setItem('appDbType', 'oracle');
+          }
+          if (cfg.oracle) {
+            localStorage.setItem('customOracleConfig', JSON.stringify(cfg.oracle));
+          }
+          if (cfg.postgres) {
+            localStorage.setItem('customPostgresConfig', JSON.stringify(cfg.postgres));
+          }
+        } else {
+          if (!localStorage.getItem('appDbType')) {
+            localStorage.setItem('appDbType', 'oracle');
           }
         }
-      } catch(e) {
-        console.error("Bootstrapping config failed", e);
+      } catch (e) {
+        console.error("Bootstrapping config from server failed", e);
+        if (!localStorage.getItem('appDbType')) {
+          localStorage.setItem('appDbType', 'oracle');
+        }
       } finally {
         setIsBootstrapping(false);
       }

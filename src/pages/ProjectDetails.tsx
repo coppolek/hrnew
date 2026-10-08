@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Download, Printer, UserPlus, Trash2, Plus, Building2, Briefcase, X, Pencil, GripVertical, CheckCircle2, Clock, Upload, Loader2, Sparkles, Database, UploadCloud, Copy, ClipboardPaste, Wand2, AlertTriangle } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -1889,7 +1889,7 @@ Esempio di output desiderato:
           {services.map((service: any) => {
             const ops = operatorStore[`${activeSiteId}_${service.id}`] || [];
 
-            const tHours = ops.reduce((tot: number, op: any) => tot + Object.values(op.hours).reduce((s: number, hVal: any) => s + (parseFloat(hVal as string) || 0), 0), 0);
+            const tHours = ops.reduce((tot: number, op: any) => tot + Number(Object.values(op.hours).reduce((s: number, hVal: any) => s + (parseFloat(hVal as string) || 0), 0)), 0);
 
             let summary = null;
             let skipRender = false;
@@ -1918,7 +1918,7 @@ Esempio di output desiderato:
             } else if (service.name.toUpperCase() === 'EXTRA') {
               const ordS = services.find((s: any) => s.name.toUpperCase() === 'PULIZIE ORDINARIE');
               const ordOps = ordS ? (operatorStore[`${activeSiteId}_${ordS.id}`] || []) : [];
-              const oreOrd = ordOps.reduce((tot: number, op: any) => tot + Object.values(op.hours).reduce((s: number, hVal: any) => s + (parseFloat(hVal as string) || 0), 0), 0);
+              const oreOrd = ordOps.reduce((tot: number, op: any) => tot + Number(Object.values(op.hours).reduce((s: number, hVal: any) => s + (parseFloat(hVal as string) || 0), 0)), 0);
               const canoneStr = currentSettings.canone.toString().replace(',', '.');
               const canoneNum = parseFloat(canoneStr) || 0;
               let oreExtraDaOrdinarie = 0;
